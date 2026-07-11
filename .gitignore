@@ -1,0 +1,52 @@
+# 数据目录（含学生名单、提交记录等敏感信息）
+data/
+
+# 已整理的文件目录
+organized_files/
+homework/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*token*.txt
+*secret*.txt
+credentials.json
+
+# 打包产物
+build/
+dist/
+
+# 系统文件
+Thumbs.db
+.DS_Store
+*.tmp
+
+# 备份文件
+*_备份.*
+*_backup.*
+*.bak
+
+# 公告编辑器独立版（已合并到dashboard）
+announce_editor.html
+
+# 旧版备份
+server_旧版备份.py
+dashboard_purple.html
+
+# IDE
+.vscode/
+.idea/
+.codebuddy/
+
+# Node (如果有)
+node_modules/
