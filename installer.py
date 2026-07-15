@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-微信作业追踪器 - 图形化安装向导
-作者: Triple y
+作业追踪器 - 图形化安装向导
+维护者: Assignment_Dashboard 项目贡献者
 7步安装流程：欢迎→环境检测→班级设置→安装与目录配置→文件类型设置→科目关键词→安装执行
 """
 
@@ -25,11 +25,11 @@ import threading
 # 常量配置
 # ============================================================
 
-APP_NAME = "微信作业追踪器"
-APP_VERSION = "1.2"
+APP_NAME = "作业追踪器"
+APP_VERSION = "0.1.0"
 APP_PORT = 18765
-AUTHOR_WECHAT = "Y-yyY---yY_Y-Y_"
-AUTHOR = "Triple y"
+AUTHOR = "项目贡献者"
+SUPPORT_URL = "https://github.com/Trip1eY/Assignment_Dashboard/issues/new/choose"
 
 # 嵌入版 Python 下载地址
 PYTHON_EMBED_URL = "https://www.python.org/ftp/python/3.12.4/python-3.12.4-embed-amd64.zip"
@@ -1680,7 +1680,7 @@ class InstallerWizard:
     
     def _install_failed(self, title, message):
         """安装失败弹窗"""
-        full_msg = f"{message}\n\n如问题持续，请联系作者\n作者微信: {AUTHOR_WECHAT}"
+        full_msg = f"{message}\n\n如问题持续，请前往 GitHub Issues 反馈：\n{SUPPORT_URL}"
         messagebox.showerror(title, full_msg, parent=self.root)
     
     def run(self):

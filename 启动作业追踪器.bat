@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 chcp 65001 >nul
-title Assignment Dashboard - By Triple y
+title Assignment_Dashboard
 cd /d "%~dp0"
 
 set "PORT=18765"
@@ -30,8 +30,7 @@ goto python_ready
 
 :python_ready
 echo ============================================
-echo    Assignment Dashboard
-echo    By Triple y
+echo    Assignment_Dashboard
 echo    URL: http://localhost:%PORT%
 echo ============================================
 echo.

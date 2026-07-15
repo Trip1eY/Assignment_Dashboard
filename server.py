@@ -120,8 +120,8 @@ _DEFAULT_CLASS_FOLDER = str(Path.home() / "Desktop" / _DEFAULT_CLASS_NAME)
 ORGANIZED_DIR = Path(_DEFAULT_CLASS_FOLDER) / "已收作业"
 CONVERT_TEMP_DIR = Path(tempfile.gettempdir()) / "wechat-tracker-convert"
 PREVIEW_CACHE_DIR = DATA_DIR / "preview_cache"  # Word→PDF 预览缓存，持久化到 data/
-APP_VERSION = "1.2"
-UPDATE_REPOSITORY = "Trip1eY/Assignment-Dashboard-"
+APP_VERSION = "0.1.0"
+UPDATE_REPOSITORY = "Trip1eY/Assignment_Dashboard"
 VERSION_MANIFEST = BASE_DIR / "manifest.json"
 
 
@@ -5147,7 +5147,7 @@ class APIHandler(SimpleHTTPRequestHandler):
         ]
 
         manifest = {
-            "app": "Assignment-Dashboard",
+            "app": "Assignment_Dashboard",
             "version": version,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "files": package_files,
@@ -5191,7 +5191,7 @@ class APIHandler(SimpleHTTPRequestHandler):
             api_url,
             headers={
                 "Accept": "application/vnd.github+json",
-                "User-Agent": "Assignment-Dashboard-Updater",
+                "User-Agent": "Assignment_Dashboard-Updater",
             },
         )
         try:
@@ -5580,13 +5580,13 @@ class APIHandler(SimpleHTTPRequestHandler):
 def main():
     global watcher, _http_server, _app_start_time
     _app_start_time = time.time()
-    parser = argparse.ArgumentParser(description="微信作业提交追踪器")
+    parser = argparse.ArgumentParser(description="作业提交追踪器")
     parser.add_argument("--port", type=int, default=18765, help="HTTP 服务端口")
     parser.add_argument("--no-watch", action="store_true", help="不启动文件监控")
     args = parser.parse_args()
 
     print("=" * 50)
-    print(f"  微信作业提交追踪器  v{current_app_version()}")
+    print(f"  作业提交追踪器  v{current_app_version()}")
     print("=" * 50)
 
     if not acquire_server_lock(args.port):

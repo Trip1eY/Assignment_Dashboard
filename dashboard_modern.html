@@ -6787,7 +6787,7 @@ async function downloadModernUpdate() {
     const resp = await fetch(info.asset.download_url);
     if (!resp.ok) throw new Error(`下载失败（HTTP ${resp.status}）`);
     const blob = await resp.blob();
-    await handleModernUpdate(new File([blob], info.asset.name, { type: 'application/zip' }));
+    await handleModernUpdateFile(new File([blob], info.asset.name, { type: 'application/zip' }));
   } catch (e) {
     if (result) result.textContent = `${e.message}。可打开 Release 页面手动下载。`;
     if (info.release_url) window.open(info.release_url, '_blank', 'noopener');

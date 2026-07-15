@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 作业追踪器 - 更新打包脚本
-作者: Triple y
+维护者: Assignment_Dashboard 项目贡献者
 将系统文件打包为更新ZIP包，支持纳入 announcement.json 和自定义文件列表
 """
 
@@ -166,7 +166,7 @@ def create_update_package(version=None, file_list=None, output_name=None):
             print(f"  ! announcement.json 不存在，跳过（可选）")
 
         manifest = {
-            "app": "Assignment-Dashboard",
+            "app": "Assignment_Dashboard",
             "version": str(version),
             "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
             "files": [name for name in file_list if name != "manifest.json"],
