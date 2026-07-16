@@ -796,6 +796,7 @@ def default_config():
         "file_keywords": ["作业", "报告", "论文", "实验", "习题", "课设"],
         "scan_dirs": [str(EXPERIMENT_BASE)],  # "扫描已有文件"的根目录列表
         "templates": [],  # 模板文件列表
+        "ignored_files": [],  # 用户明确忽略的文件路径
         "ignored_subjects": [],  # 用户已删除的科目，防止 load_config 从目录重建时复活
         "ignored_assignments": [],  # 用户已删除的作业，防止目录自动扫描重建时复活
         "ui_theme": DEFAULT_UI_THEME.copy(),
@@ -1114,6 +1115,7 @@ def _clean_config_paths(cfg):
     if "scan_dir" in cfg:
         cfg.pop("scan_dir", None)
     cfg["ui_theme"] = normalize_ui_theme(cfg.get("ui_theme"))
+    cfg["ignored_files"] = _clean_path_list(cfg.get("ignored_files", []))
     cfg["ignored_subjects"] = [str(v).strip() for v in cfg.get("ignored_subjects", []) if str(v).strip()]
     cfg["ignored_assignments"] = [str(v).strip() for v in cfg.get("ignored_assignments", []) if str(v).strip()]
     if cfg.get("default_frontend") not in ("classic", "modern"):
@@ -1404,6 +1406,11 @@ def _path_key(path_value):
     except (OSError, RuntimeError, ValueError):
         return os.path.abspath(os.path.expandvars(os.path.expanduser(path_text))).lower()
 
+def _ignored_file_keys(cfg=None):
+    """Return normalized paths that the user has chosen to ignore."""
+    cfg = cfg if isinstance(cfg, dict) else load_config_raw()
+    return {_path_key(value) for value in cfg.get("ignored_files", []) if _path_key(value)}
+
 def _current_wechat_month_dirs(accounts=None, now=None):
     """Return existing WeChat YYYY-MM directories for the current month."""
     accounts = _clean_path_list(accounts or [])
@@ -1528,6 +1535,7 @@ def scan_new_files(known_files):
     watch_dirs = get_effective_watch_dirs(cfg)
     keywords = cfg.get("file_keywords", ["作业", "报告", "论文"])
     doc_exts = configured_file_types(cfg)
+    ignored_keys = _ignored_file_keys(cfg)
     known_keys = {_path_key(p) for p in (known_files or [])}
     seen_this_scan = set()
     for wdir in watch_dirs:
@@ -1539,6 +1547,8 @@ def scan_new_files(known_files):
                 fstr = str(f)
                 fkey = _path_key(fstr)
                 if fkey and fkey not in known_keys and fkey not in seen_this_scan:
+                    if fkey in ignored_keys:
+                        continue
                     # 防御：即使系统输出目录意外进入 watch_dirs，也不要处理系统自己归档/公示的副本。
                     if _is_under_system_output(f, cfg):
                         continue
@@ -4247,9 +4257,10 @@ class APIHandler(SimpleHTTPRequestHandler):
             if file_path_str:
                 cfg = load_config_raw()
                 ignored = cfg.get("ignored_files", [])
-                if file_path_str not in ignored:
+                ignored_keys = {_path_key(item) for item in ignored if _path_key(item)}
+                if _path_key(file_path_str) not in ignored_keys:
                     ignored.append(file_path_str)
-                    cfg["ignored_files"] = ignored
+                    cfg["ignored_files"] = _clean_path_list(ignored)
                     save_config(cfg)
             self._json({"ok": True})
 
@@ -4696,7 +4707,7 @@ class APIHandler(SimpleHTTPRequestHandler):
             }
 
         # 收集所有提交中的未匹配文件（跨所有科目，去重）
-        ignored_files = cfg.get("ignored_files", [])
+        ignored_keys = _ignored_file_keys(cfg)
         unmatched = []
         pending_archive = []
         seen_unmatched = set()
@@ -4708,6 +4719,9 @@ class APIHandler(SimpleHTTPRequestHandler):
                     continue
                 fp = r["file"].get("path", "")
                 if not fp or fp in seen_unmatched:
+                    continue
+                if _path_key(fp) in ignored_keys:
+                    seen_unmatched.add(fp)
                     continue
                 classification = r.get("classification") or {}
                 stage = classification.get("stage") or r.get("status", "")
@@ -4722,10 +4736,6 @@ class APIHandler(SimpleHTTPRequestHandler):
                     continue
                 student = r.get("student")
                 if not student or student not in student_map:
-                    # 跳过已忽略的文件
-                    if fp in ignored_files:
-                        seen_unmatched.add(fp)
-                        continue
                     # 取文件 mtime（修改时间），文件不存在则为空
                     file_mtime = ""
                     try:

@@ -2581,6 +2581,7 @@ function renderDashboard() {
         </span>
         <span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${fileActionButtons(f.file_path)}
           <button onclick="classicAnalyzePending(${i})">智能识别</button>
+          <button class="ignore-btn" onclick="ignorePendingArchiveByIdx(${i})">忽略</button>
           <button onclick="classicSetPendingSubject(${i})">修改科目</button>
           <select id="classic-pending-assignment-${i}"><option value="">选择具体作业</option>${assignments.map(a => `<option value="${a.id}">${a.name || a.experiment}</option>`).join('')}</select>
           <button class="primary" onclick="classicConfirmPending(${i})">确认归档</button>
@@ -2921,6 +2922,14 @@ async function deleteKeyword(kw) {
   cfg.file_keywords = (cfg.file_keywords || []).filter(k => k !== kw);
   await apiPost('/api/config/save', cfg);
   await renderKeywords();
+}
+
+async function ignorePendingArchiveByIdx(idx) {
+  const file = (window._pendingArchiveFiles || [])[idx];
+  if (!file?.file_path) return;
+  if (!confirm('确定忽略此文件？它将不再出现在待处理列表中。')) return;
+  await apiPost('/api/unmatched/ignore', { file_path: file.file_path });
+  await refreshDashboard();
 }
 
 async function classicAnalyzePending(idx) {
