@@ -26,7 +26,7 @@ import threading
 # ============================================================
 
 APP_NAME = "作业追踪器"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 APP_PORT = 18765
 AUTHOR = "项目贡献者"
 SUPPORT_URL = "https://github.com/Trip1eY/Assignment_Dashboard/issues/new/choose"

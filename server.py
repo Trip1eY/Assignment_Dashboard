@@ -120,7 +120,7 @@ _DEFAULT_CLASS_FOLDER = str(Path.home() / "Desktop" / _DEFAULT_CLASS_NAME)
 ORGANIZED_DIR = Path(_DEFAULT_CLASS_FOLDER) / "已收作业"
 CONVERT_TEMP_DIR = Path(tempfile.gettempdir()) / "wechat-tracker-convert"
 PREVIEW_CACHE_DIR = DATA_DIR / "preview_cache"  # Word→PDF 预览缓存，持久化到 data/
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 UPDATE_REPOSITORY = "Trip1eY/Assignment_Dashboard"
 VERSION_MANIFEST = BASE_DIR / "manifest.json"
 

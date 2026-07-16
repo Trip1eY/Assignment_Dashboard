@@ -16,5 +16,5 @@
   },
   "port": 18765,
   "auto_scan_interval": 30,
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
