@@ -1,0 +1,14 @@
+# Assignment_Dashboard 依赖列表
+#
+# 核心功能不需要任何第三方依赖。
+# 以下均为可选依赖，缺少时相应功能会降级。
+
+# Word 文档解析（.docx 文本提取和预览）
+python-docx>=0.8.11
+
+# PDF 文本提取
+PyPDF2>=3.0.0
+
+# Windows COM 自动化（仅 Windows，用于 Word→PDF 转换）
+# macOS/Linux 用户无需安装，系统会自动降级到 LibreOffice
+pywin32>=306; sys_platform == "win32"

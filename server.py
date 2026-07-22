@@ -347,10 +347,13 @@ def _preview_cache_path(src):
 
 def _find_libreoffice():
     candidates = [shutil.which("soffice"), shutil.which("libreoffice")]
-    candidates.extend([
-        os.environ.get("PROGRAMFILES", "") + r"\LibreOffice\program\soffice.exe",
-        os.environ.get("PROGRAMFILES(X86)", "") + r"\LibreOffice\program\soffice.exe",
-    ])
+    if sys.platform == "darwin":
+        candidates.append("/Applications/LibreOffice.app/Contents/MacOS/soffice")
+    elif sys.platform == "win32":
+        candidates.extend([
+            os.environ.get("PROGRAMFILES", "") + r"\LibreOffice\program\soffice.exe",
+            os.environ.get("PROGRAMFILES(X86)", "") + r"\LibreOffice\program\soffice.exe",
+        ])
     for value in candidates:
         if value and Path(value).exists():
             return str(Path(value))
@@ -481,6 +484,10 @@ def warm_preview_cache_async():
 
 def _warm_preview_cache_worker():
     """实际执行预热的工作线程（复用 Word COM 实例，避免重复 Disp/Quit 导致 RPC 错误）"""
+    if sys.platform != "win32":
+        # Word COM 仅在 Windows 可用，非 Windows 跳过预热
+        print("[WarmUp] Word COM 不可用（非 Windows），跳过预热")
+        return
     try:
         # 扫描已收作业目录下的所有 .docx/.doc 文件
         doc_files = []
@@ -670,10 +677,17 @@ def build_submission_record(file_info, student_name, assignment_id, assignment_n
         record.update(extra)
     return record
 
-# 微信文件目录
-WECHAT_FILES_BASE = Path.home() / "Documents" / "WeChat Files"
-# 微信 4.x 新路径（C:\Users\xxx\xwechat_files\）
-XWECHAT_BASE = Path.home() / "xwechat_files"
+# 微信文件目录（按平台区分）
+if sys.platform == "darwin":
+    # macOS 微信文件存储路径
+    _WECHAT_MAC_CONTAINER = Path.home() / "Library" / "Containers" / "com.tencent.xinWeChat"
+    _WECHAT_MAC_APP_SUPPORT = _WECHAT_MAC_CONTAINER / "Data" / "Library" / "Application Support" / "com.tencent.xinWeChat"
+    WECHAT_FILES_BASE = _WECHAT_MAC_APP_SUPPORT
+    XWECHAT_BASE = _WECHAT_MAC_CONTAINER / "Data"
+else:
+    WECHAT_FILES_BASE = Path.home() / "Documents" / "WeChat Files"
+    # 微信 4.x 新路径（C:\Users\xxx\xwechat_files\）
+    XWECHAT_BASE = Path.home() / "xwechat_files"
 
 # ---------------------------------------------------------------------------
 # 配置/数据管理
@@ -2611,8 +2625,10 @@ def read_pdf_text(file_path):
         return None, f"读取 .pdf 失败: {str(e)[:200]}"
 
 class _WordComContext:
-    """Word COM 上下文管理器，统一处理 COM 初始化/清理"""
+    """Word COM 上下文管理器，统一处理 COM 初始化/清理（仅 Windows）"""
     def __enter__(self):
+        if sys.platform != "win32":
+            raise OSError("Word COM automation is only available on Windows")
         import pythoncom
         pythoncom.CoInitialize()
         import win32com.client
@@ -2627,13 +2643,17 @@ class _WordComContext:
         return self.doc
 
     def __exit__(self, *args):
-        if self.doc:
+        if getattr(self, "doc", None):
             try: self.doc.Close(SaveChanges=False)
             except: pass
-        try: self.word.Quit()
-        except: pass
-        import pythoncom
-        pythoncom.CoUninitialize()
+        if getattr(self, "word", None):
+            try: self.word.Quit()
+            except: pass
+        try:
+            import pythoncom
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
         return False  # 不吞异常
 
 
@@ -3449,6 +3469,8 @@ class APIHandler(SimpleHTTPRequestHandler):
                 try:
                     if sys.platform == "win32":
                         os.startfile(str(safe_fp))
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", str(safe_fp)])
                     else:
                         subprocess.Popen(["xdg-open", str(safe_fp)])
                     self._json({"ok": True})
@@ -3465,6 +3487,8 @@ class APIHandler(SimpleHTTPRequestHandler):
                 try:
                     if sys.platform == "win32":
                         os.startfile(parent)
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", parent])
                     else:
                         subprocess.Popen(["xdg-open", parent])
                     self._json({"ok": True})
@@ -5151,9 +5175,11 @@ class APIHandler(SimpleHTTPRequestHandler):
             "restart_helper.py",
             "pack.py",
             "repair_update.py",
+            "requirements.txt",
             "repair_update.bat",
             "启动作业追踪器.bat",
             "更新修复工具.bat",
+            "start.sh",
         ]
 
         manifest = {
@@ -5317,7 +5343,7 @@ class APIHandler(SimpleHTTPRequestHandler):
         try:
             # 备份当前关键文件
             backup_entries = []
-            for item in ["server.py", "ai_classifier.py", "dashboard.html", "dashboard_modern.html", "pack.py", "repair_update.py", "repair_update.bat", "CHANGELOG.md", "announcement.json", "manifest.json", "启动作业追踪器.bat", "更新修复工具.bat"]:
+            for item in ["server.py", "ai_classifier.py", "dashboard.html", "dashboard_modern.html", "pack.py", "repair_update.py", "repair_update.bat", "CHANGELOG.md", "announcement.json", "manifest.json", "启动作业追踪器.bat", "更新修复工具.bat", "start.sh", "requirements.txt"]:
                 fp = BASE_DIR / item
                 if fp.exists():
                     backup_entries.append((str(fp), item))

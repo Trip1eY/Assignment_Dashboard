@@ -64,8 +64,10 @@ INSTALL_FILES = [
     "dashboard.html",
     "pack.py",
     "repair_update.py",
+    "requirements.txt",
     "repair_update.bat",
     "更新修复工具.bat",
+    "start.sh",
 ]
 
 PROTECTED_INSTALL_DIRS = {
