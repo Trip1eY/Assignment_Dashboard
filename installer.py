@@ -60,8 +60,10 @@ FILE_TYPE_GROUPS = {
 # 需要安装到目标目录的文件列表
 INSTALL_FILES = [
     "server.py",
+    "ai_classifier.py",
     "restart_helper.py",
     "dashboard.html",
+    "dashboard_modern.html",
     "pack.py",
     "repair_update.py",
     "requirements.txt",
