@@ -5190,6 +5190,10 @@ class APIHandler(SimpleHTTPRequestHandler):
             "ai_classifier.py",
             "dashboard.html",
             "dashboard_modern.html",
+            "static/classic.css",
+            "static/classic.js",
+            "static/modern.css",
+            "static/modern.js",
             "restart_helper.py",
             "pack.py",
             "repair_update.py",
@@ -5321,7 +5325,15 @@ class APIHandler(SimpleHTTPRequestHandler):
             return
 
         # 3. 验证关键文件存在
-        required_files = ["server.py", "dashboard.html"]
+        required_files = [
+            "server.py",
+            "dashboard.html",
+            "dashboard_modern.html",
+            "static/classic.css",
+            "static/classic.js",
+            "static/modern.css",
+            "static/modern.js",
+        ]
         missing = [f for f in required_files if f not in file_list]
         if missing:
             self._json({"ok": False, "msg": f"更新包缺少关键文件: {', '.join(missing)}"})
@@ -5361,7 +5373,11 @@ class APIHandler(SimpleHTTPRequestHandler):
         try:
             # 备份当前关键文件
             backup_entries = []
-            for item in ["server.py", "ai_classifier.py", "dashboard.html", "dashboard_modern.html", "pack.py", "repair_update.py", "repair_update.bat", "CHANGELOG.md", "announcement.json", "manifest.json", "启动作业追踪器.bat", "更新修复工具.bat", "start.sh", "requirements.txt"]:
+            for item in ["server.py", "ai_classifier.py", "dashboard.html", "dashboard_modern.html",
+                         "static/classic.css", "static/classic.js", "static/modern.css", "static/modern.js",
+                         "pack.py", "repair_update.py", "repair_update.bat", "CHANGELOG.md",
+                         "announcement.json", "manifest.json", "启动作业追踪器.bat",
+                         "更新修复工具.bat", "start.sh", "requirements.txt"]:
                 fp = BASE_DIR / item
                 if fp.exists():
                     backup_entries.append((str(fp), item))

@@ -12,6 +12,10 @@ RUNTIME_FILES = {
     "restart_helper.py",
     "dashboard.html",
     "dashboard_modern.html",
+    "static/classic.css",
+    "static/classic.js",
+    "static/modern.css",
+    "static/modern.js",
 }
 
 
@@ -39,6 +43,9 @@ def spec_data_files(path):
 
 
 class PackagingManifestTest(unittest.TestCase):
+    def test_runtime_files_exist(self):
+        self.assertEqual([], sorted(name for name in RUNTIME_FILES if not (ROOT / name).is_file()))
+
     def test_installer_contains_runtime_files(self):
         install_files = set(literal_assignment(ROOT / "installer.py", "INSTALL_FILES"))
         self.assertTrue(RUNTIME_FILES <= install_files)
@@ -51,6 +58,9 @@ class PackagingManifestTest(unittest.TestCase):
     def test_update_backup_contains_runtime_files(self):
         backup_files = set(literal_assignment(ROOT / "repair_update.py", "COMMON_BACKUP_FILES"))
         self.assertTrue(RUNTIME_FILES <= backup_files)
+        required_files = set(literal_assignment(ROOT / "repair_update.py", "REQUIRED_FILES"))
+        update_required = RUNTIME_FILES - {"ai_classifier.py", "restart_helper.py"}
+        self.assertTrue(update_required <= required_files)
 
 
 if __name__ == "__main__":
