@@ -124,6 +124,15 @@ APP_VERSION = "0.1.1"
 UPDATE_REPOSITORY = "Trip1eY/Assignment_Dashboard"
 VERSION_MANIFEST = BASE_DIR / "manifest.json"
 STATIC_FILE_SUFFIXES = {".css", ".js", ".png", ".svg", ".ico"}
+UPDATE_REQUIRED_FILES = (
+    "server.py",
+    "dashboard.html",
+    "dashboard_modern.html",
+    "static/classic.css",
+    "static/classic.js",
+    "static/modern.css",
+    "static/modern.js",
+)
 
 
 def _version_key(value):
@@ -5325,16 +5334,7 @@ class APIHandler(SimpleHTTPRequestHandler):
             return
 
         # 3. 验证关键文件存在
-        required_files = [
-            "server.py",
-            "dashboard.html",
-            "dashboard_modern.html",
-            "static/classic.css",
-            "static/classic.js",
-            "static/modern.css",
-            "static/modern.js",
-        ]
-        missing = [f for f in required_files if f not in file_list]
+        missing = [f for f in UPDATE_REQUIRED_FILES if f not in file_list]
         if missing:
             self._json({"ok": False, "msg": f"更新包缺少关键文件: {', '.join(missing)}"})
             return
