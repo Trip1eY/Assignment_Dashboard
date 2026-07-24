@@ -25,9 +25,11 @@ PACK_CONFIG = {
         "dashboard_modern.html",
         "pack.py",
         "repair_update.py",
+        "requirements.txt",
         "repair_update.bat",
         "启动作业追踪器.bat",
         "更新修复工具.bat",
+        "start.sh",
         "CHANGELOG.md",
         "manifest.json"
     ],
