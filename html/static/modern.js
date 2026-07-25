@@ -674,6 +674,17 @@ function renderStatus(status, cfg) {
   document.getElementById('watch-text').textContent = status.watching ? '实时监控中' : '监控已暂停';
   document.getElementById('dir-count').textContent = (status.watch_dirs || []).length + ' 个监听目录';
   document.getElementById('top-student-count').textContent = students.length + ' 名学生';
+  renderRuntimeCapabilities(status);
+}
+function renderRuntimeCapabilities(status) {
+  const note = document.getElementById('runtime-capability-note');
+  if (!note) return;
+  const warnings = [...(status.capabilities?.warnings || []), ...(status.wechat_discovery?.warnings || [])];
+  if (status.wechat_discovery?.manual_selection_required) {
+    warnings.push('未自动发现微信目录，请把微信文件目录粘贴到上方输入框手动添加。');
+  }
+  note.textContent = [...new Set(warnings)].join(' ');
+  note.style.color = warnings.length ? 'var(--orange)' : '';
 }
 function activeAssignments() {
   return (state.dashboard?.assignments || []).filter(a => !a.completed);

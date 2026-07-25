@@ -8,11 +8,15 @@
 """
 
 import datetime
+import argparse
 import json
 import os
 import shutil
+import socket
+import stat
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -56,6 +60,7 @@ COMMON_BACKUP_FILES = (
     "manifest.json",
 )
 SKIP_PREFIXES = ("data/", "backups/", "releases/", "output/", ".git/", "__pycache__/")
+JOURNAL_MEMBER = ".assignment_dashboard_update_journal.json"
 
 
 def log(message):
@@ -86,6 +91,20 @@ def is_safe_member(name):
     return member
 
 
+def platform_matches(target, current=None):
+    target = str(target or "").lower()
+    current = str(current or sys.platform).lower()
+    if not target or target in ("all", "universal"):
+        return True
+    if target in ("windows", "win32"):
+        return current.startswith("win")
+    if target in ("macos", "darwin"):
+        return current == "darwin"
+    if target.startswith("linux"):
+        return current.startswith("linux")
+    return target == current
+
+
 def process_is_running(pid):
     if not pid:
         return False
@@ -102,34 +121,62 @@ def process_is_running(pid):
             return False
     try:
         os.kill(pid, 0)
+        try:
+            state = subprocess.run(
+                ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=2
+            ).stdout.strip()
+            if state.startswith("Z"):
+                return False
+        except Exception:
+            pass
         return True
     except OSError:
         return False
 
 
+def wait_for_process_exit(pid, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not process_is_running(pid):
+            return True
+        time.sleep(0.1)
+    return not process_is_running(pid)
+
+
 def stop_running_server():
     if not LOCK_PATH.exists():
-        return
+        return None, False
     try:
         data = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
         pid = int(data.get("pid") or 0)
+        port = int(data.get("port") or 0) or None
     except Exception:
         pid = 0
+        port = None
 
-    if pid and process_is_running(pid):
+    was_running = bool(pid and process_is_running(pid))
+    if was_running:
         log(f"[INFO] 检测到旧服务进程 PID {pid}，准备停止。")
         try:
             if sys.platform == "win32":
                 subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], timeout=15)
             else:
                 os.kill(pid, 15)
-            log("[INFO] 旧服务进程已停止。")
+            if not wait_for_process_exit(pid, timeout=10):
+                if sys.platform == "win32":
+                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], timeout=15)
+                else:
+                    os.kill(pid, 9)
+                if not wait_for_process_exit(pid, timeout=5):
+                    raise RuntimeError(f"旧服务进程 PID {pid} 未能退出")
+            log("[INFO] 旧服务进程已停止，端口可以安全交接。")
         except Exception as e:
-            log(f"[WARN] 停止旧服务失败，可手动关闭启动窗口后重试: {e}")
+            raise RuntimeError(f"停止旧服务失败，请手动关闭后重试: {e}") from e
     try:
         LOCK_PATH.unlink(missing_ok=True)
     except Exception:
         pass
+    return port, was_running
 
 
 def validate_zip(zip_path):
@@ -143,6 +190,13 @@ def validate_zip(zip_path):
         if bad:
             raise ValueError(f"更新包损坏: {bad}")
         raw_names = zf.namelist()
+        if "manifest.json" in raw_names:
+            try:
+                manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise ValueError(f"manifest.json 无效: {exc}") from exc
+            if not platform_matches(manifest.get("platform")):
+                raise ValueError(f"更新包目标平台不匹配: {manifest.get('platform')}")
 
     members = []
     for name in raw_names:
@@ -166,6 +220,7 @@ def create_backup(update_members):
 
     backup_names = set(COMMON_BACKUP_FILES)
     backup_names.update(update_members)
+    existing_members = []
 
     with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name in sorted(backup_names):
@@ -175,17 +230,41 @@ def create_backup(update_members):
             fp = BASE_DIR / safe
             if fp.exists() and fp.is_file():
                 zf.write(fp, safe)
+                if safe in update_members:
+                    existing_members.append(safe)
         if DATA_DIR.exists():
             for fp in DATA_DIR.rglob("*"):
                 if fp.is_file():
                     zf.write(fp, str(fp.relative_to(BASE_DIR)).replace("\\", "/"))
+        journal = {"update_members": list(update_members), "existing_members": existing_members}
+        zf.writestr(JOURNAL_MEMBER, json.dumps(journal, ensure_ascii=False, indent=2))
 
     log(f"[INFO] 已创建离线更新备份: {backup_path}")
     return backup_path
 
 
-def apply_update(zip_path, members):
+def _atomic_write(target, content, executable=False):
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    old_mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else None
+    temp_target = target.with_name(f".{target.name}.{os.getpid()}.update-tmp")
+    try:
+        temp_target.write_bytes(content)
+        if executable:
+            temp_target.chmod((old_mode or 0o644) | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        elif old_mode is not None:
+            temp_target.chmod(old_mode)
+        os.replace(temp_target, target)
+    finally:
+        try:
+            temp_target.unlink()
+        except OSError:
+            pass
+
+
+def apply_update(zip_path, members, writer=None):
     updated = []
+    writer = writer or _atomic_write
     with zipfile.ZipFile(zip_path, "r") as zf:
         names_by_safe = {}
         for raw in zf.namelist():
@@ -200,8 +279,7 @@ def apply_update(zip_path, members):
             except ValueError:
                 log(f"[WARN] 跳过越界路径: {member}")
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(zf.read(names_by_safe[member]))
+            writer(target, zf.read(names_by_safe[member]), member.endswith(".sh"))
             updated.append(member)
             log(f"[OK] 已更新: {member}")
     return updated
@@ -212,7 +290,25 @@ def restore_backup(backup_path):
         return
     log("[WARN] 更新失败，开始从备份恢复。")
     with zipfile.ZipFile(backup_path, "r") as zf:
+        try:
+            journal = json.loads(zf.read(JOURNAL_MEMBER).decode("utf-8"))
+        except (KeyError, ValueError, UnicodeDecodeError):
+            journal = {}
+        existing = set(journal.get("existing_members", []))
+        for name in journal.get("update_members", []):
+            safe = is_safe_member(name)
+            if not safe or safe in existing:
+                continue
+            target = (BASE_DIR / safe).resolve()
+            try:
+                target.relative_to(BASE_DIR.resolve())
+                if target.is_file() or target.is_symlink():
+                    target.unlink()
+            except (OSError, ValueError):
+                pass
         for raw in zf.namelist():
+            if raw == JOURNAL_MEMBER:
+                continue
             safe = normalize_member(raw)
             if not safe:
                 continue
@@ -221,14 +317,11 @@ def restore_backup(backup_path):
                 target.relative_to(BASE_DIR.resolve())
             except ValueError:
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(zf.read(raw))
+            _atomic_write(target, zf.read(raw), safe.endswith(".sh"))
     log("[INFO] 已恢复备份。")
 
 
 def ask_zip_path():
-    if len(sys.argv) >= 2:
-        return Path(" ".join(sys.argv[1:]).strip().strip('"'))
     print("")
     print("请把更新包 .zip 拖到这个窗口，然后按 Enter。")
     print("也可以直接输入更新包完整路径。")
@@ -236,23 +329,76 @@ def ask_zip_path():
     return Path(raw)
 
 
-def main():
+def port_is_listening(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.25)
+        return sock.connect_ex(("127.0.0.1", int(port))) == 0
+
+
+def launch_dashboard(port=18765, timeout=20):
+    server_path = BASE_DIR / "py" / "server.py"
+    if not server_path.is_file():
+        raise RuntimeError("更新后缺少 py/server.py")
+    LOG_DIR.mkdir(exist_ok=True)
+    log_path = LOG_DIR / "dashboard.log"
+    command = [sys.executable, "-B", "-u", str(server_path), "--port", str(port)]
+    kwargs = {"cwd": str(BASE_DIR)}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+    else:
+        kwargs["start_new_session"] = True
+    with log_path.open("ab") as output:
+        proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                                **kwargs)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if port_is_listening(port):
+            log(f"[INFO] 新服务已启动，PID {proc.pid}，端口 {port}。")
+            return proc.pid
+        code = proc.poll()
+        if code is not None:
+            raise RuntimeError(f"新服务启动失败，退出码 {code}，请查看 {log_path}")
+        time.sleep(0.2)
+    try:
+        proc.terminate()
+    except OSError:
+        pass
+    raise RuntimeError(f"新服务启动超时，端口 {port} 未就绪，请查看 {log_path}")
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="作业追踪器离线更新修复工具")
+    parser.add_argument("zip_path", nargs="?", help="更新包 ZIP 路径")
+    parser.add_argument("--port", type=int, help="重启服务使用的端口（默认沿用旧服务或 18765）")
+    parser.add_argument("--no-restart", action="store_true", help="更新后不自动重启服务")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
     print("=" * 58)
     print("  微信作业追踪器 - 离线更新修复工具")
     print("=" * 58)
     print(f"安装目录: {BASE_DIR}")
 
-    zip_path = ask_zip_path()
+    zip_path = Path(args.zip_path.strip().strip('"')) if args.zip_path else ask_zip_path()
     backup_path = None
+    restart_port = args.port or 18765
+    server_was_running = False
     try:
         log(f"[INFO] 准备应用更新包: {zip_path}")
         members = validate_zip(zip_path)
         log(f"[INFO] 更新包校验通过，可更新文件 {len(members)} 个。")
-        stop_running_server()
+        detected_port, server_was_running = stop_running_server()
+        restart_port = args.port or detected_port or 18765
         backup_path = create_backup(members)
         updated = apply_update(zip_path, members)
         log(f"[SUCCESS] 离线更新完成，共更新 {len(updated)} 个文件。")
-        log("[INFO] 用户数据 data/ 已保留。请重新运行「启动作业追踪器.bat」。")
+        if args.no_restart:
+            launcher = "启动作业追踪器.bat" if sys.platform == "win32" else "./start.sh"
+            log(f"[INFO] 用户数据 data/ 已保留。请运行 {launcher} 启动服务。")
+        else:
+            launch_dashboard(restart_port)
         return 0
     except Exception as e:
         log(f"[ERROR] 离线更新失败: {e}")
@@ -260,13 +406,20 @@ def main():
             restore_backup(backup_path)
         except Exception as restore_error:
             log(f"[ERROR] 自动恢复备份失败: {restore_error}")
+        if server_was_running and not args.no_restart:
+            try:
+                launch_dashboard(restart_port)
+                log("[INFO] 已使用恢复后的旧版本重新启动服务。")
+            except Exception as restart_error:
+                log(f"[ERROR] 恢复后服务仍无法启动: {restart_error}")
         return 1
     finally:
-        print("")
-        try:
-            input("按 Enter 关闭窗口...")
-        except EOFError:
-            pass
+        if sys.platform == "win32" and sys.stdin.isatty():
+            print("")
+            try:
+                input("按 Enter 关闭窗口...")
+            except EOFError:
+                pass
 
 
 if __name__ == "__main__":

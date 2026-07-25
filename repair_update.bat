@@ -45,7 +45,7 @@ exit /b 1
 
 :python_missing
 echo [ERROR] Python was not found.
-echo Please install Python 3.8+ or reinstall Assignment Dashboard.
+echo Please install Python 3.10+ or reinstall Assignment Dashboard.
 echo.
 pause
 exit /b 1

@@ -71,6 +71,20 @@ PACK_CONFIG = {
     "output_dir": "releases"
 }
 
+WINDOWS_UPDATE_FILES = {"repair_update.bat", "启动作业追踪器.bat", "更新修复工具.bat"}
+UNIX_UPDATE_FILES = {"start.sh"}
+
+
+def files_for_platform(file_list, target_platform=None):
+    """Filter launch/repair scripts so an update package only carries its target platform."""
+    target = (target_platform or sys.platform).lower()
+    files = list(file_list)
+    if target in ("all", "universal"):
+        return files
+    if target.startswith("win"):
+        return [name for name in files if name not in UNIX_UPDATE_FILES]
+    return [name for name in files if name not in WINDOWS_UPDATE_FILES]
+
 
 def get_version():
     """从 config.json 读取版本号"""
@@ -106,7 +120,7 @@ def should_exclude(name, patterns):
     return False
 
 
-def create_update_package(version=None, file_list=None, output_name=None):
+def create_update_package(version=None, file_list=None, output_name=None, target_platform=None):
     """
     创建更新ZIP包
     
@@ -122,6 +136,8 @@ def create_update_package(version=None, file_list=None, output_name=None):
     
     if file_list is None:
         file_list = PACK_CONFIG["include_files"]
+    resolved_platform = target_platform or sys.platform
+    file_list = files_for_platform(file_list, resolved_platform)
     
     # 输出目录
     output_dir = os.path.join(BASE_DIR, PACK_CONFIG["output_dir"])
@@ -203,6 +219,7 @@ def create_update_package(version=None, file_list=None, output_name=None):
         manifest = {
             "app": "Assignment_Dashboard",
             "version": str(version),
+            "platform": resolved_platform,
             "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
             "files": [name for name in file_list if name != "manifest.json"] + [
                 legacy_name for legacy_name, source_name in LEGACY_UPDATE_ALIASES.items()
@@ -232,7 +249,7 @@ def create_update_package(version=None, file_list=None, output_name=None):
     return zip_path
 
 
-def create_bugfix_package(fix_files, version=None):
+def create_bugfix_package(fix_files, version=None, target_platform=None):
     """
     创建Bug修复更新包（修复文件 + 更新器必需文件）
     
@@ -252,7 +269,8 @@ def create_bugfix_package(fix_files, version=None):
     print(f"[INFO] 修复文件: {fix_files}")
 
     package_files = list(dict.fromkeys([*BUGFIX_REQUIRED_FILES, *fix_files]))
-    return create_update_package(version, file_list=package_files, output_name=output_name)
+    return create_update_package(version, file_list=package_files, output_name=output_name,
+                                 target_platform=target_platform)
 
 
 def list_available_files():
@@ -297,6 +315,8 @@ def main():
     parser.add_argument("--bugfix", "-b", nargs="+", metavar="FILE", help="创建Bug修复包（自动补齐更新必需文件）")
     parser.add_argument("--files", "-f", nargs="+", metavar="FILE", help="只打包指定文件")
     parser.add_argument("--dir", "-d", help="输出目录")
+    parser.add_argument("--target-platform", choices=("current", "windows", "macos", "linux", "all"),
+                        default="current", help="更新包目标平台（默认当前平台）")
     
     args = parser.parse_args()
     
@@ -308,14 +328,16 @@ def main():
         return
     
     try:
+        target_platform = sys.platform if args.target_platform == "current" else args.target_platform
         if args.bugfix:
-            create_bugfix_package(args.bugfix, args.version)
+            create_bugfix_package(args.bugfix, args.version, target_platform=target_platform)
         elif args.files:
             output_name = args.output
-            create_update_package(args.version, file_list=args.files, output_name=output_name)
+            create_update_package(args.version, file_list=args.files, output_name=output_name,
+                                  target_platform=target_platform)
         else:
             output_name = args.output
-            create_update_package(args.version, output_name=output_name)
+            create_update_package(args.version, output_name=output_name, target_platform=target_platform)
     except Exception as e:
         print(f"[ERROR] 打包失败: {e}")
         sys.exit(1)

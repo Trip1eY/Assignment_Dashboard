@@ -288,7 +288,8 @@
           </div>
           <div class="card manage-card manage-scan-card">
             <div class="section-head"><h3>扫描目录</h3><button onclick="addScanDir()">添加</button></div>
-            <div class="toolbar" style="grid-template-columns:minmax(0,1fr) auto"><input id="scan-dir-input" placeholder="输入文件夹路径"><button class="primary" onclick="addScanDir()">加入队列</button></div>
+            <div class="toolbar" style="grid-template-columns:minmax(0,1fr) auto"><input id="scan-dir-input" placeholder="输入或粘贴任意文件夹路径"><button class="primary" onclick="addScanDir()">加入队列</button></div>
+            <div class="card-foot" id="runtime-capability-note"></div>
             <div class="list" id="scan-dir-list"></div>
             <div class="card-foot">微信每月自动创建的新文件夹会在出现后加入扫描目录，自动目录会用“微信自动”标记。</div>
           </div>

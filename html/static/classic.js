@@ -309,6 +309,7 @@ async function refreshAll() {
   const status = await apiGet('/api/status');
   document.getElementById('status-dot').className = status.watching ? 'status-dot live' : 'status-dot off';
   document.getElementById('status-text').textContent = status.watching ? '监控中' : '已停止';
+  renderRuntimeCapabilitiesClassic(status);
 
   // 同步开关状态
   const cfg = await apiGet('/api/config');
@@ -321,6 +322,17 @@ async function refreshAll() {
   document.getElementById('status-text').textContent = enabled ? '监控中' : '已停止';
 
   await refreshDashboard();
+}
+
+function renderRuntimeCapabilitiesClassic(status) {
+  const note = document.getElementById('runtime-capability-note');
+  if (!note) return;
+  const warnings = [...(status.capabilities?.warnings || []), ...(status.wechat_discovery?.warnings || [])];
+  if (status.wechat_discovery?.manual_selection_required) {
+    warnings.push('未自动发现微信目录，请把微信文件目录粘贴到上方输入框手动添加。');
+  }
+  note.textContent = [...new Set(warnings)].join(' ');
+  note.style.color = warnings.length ? 'var(--orange)' : '';
 }
 
 async function refreshDashboard() {

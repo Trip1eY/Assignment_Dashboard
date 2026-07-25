@@ -37,6 +37,8 @@ def main():
         kwargs = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+        else:
+            kwargs["start_new_session"] = True
         proc = subprocess.Popen(command, **kwargs)
 
         # server.py binds its HTTP port before starting file scans. A living

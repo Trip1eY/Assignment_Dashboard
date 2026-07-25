@@ -26,6 +26,7 @@ import secrets
 import socket
 import ipaddress
 import hmac
+import stat
 from http.cookies import SimpleCookie
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -145,6 +146,57 @@ LEGACY_UPDATE_ALIASES = {
     "static/modern.css": "html/static/modern.css",
     "static/modern.js": "html/static/modern.js",
 }
+WINDOWS_UPDATE_FILES = ("repair_update.bat", "启动作业追踪器.bat", "更新修复工具.bat")
+UNIX_UPDATE_FILES = ("start.sh",)
+
+
+def platform_update_files(platform=None):
+    platform = (platform or sys.platform).lower()
+    return list(WINDOWS_UPDATE_FILES if platform.startswith("win") else UNIX_UPDATE_FILES)
+
+
+def _update_platform_matches(target, current=None):
+    target = str(target or "").lower()
+    current = str(current or sys.platform).lower()
+    if not target or target in ("all", "universal"):
+        return True
+    if target in ("windows", "win32"):
+        return current.startswith("win")
+    if target in ("macos", "darwin"):
+        return current == "darwin"
+    if target.startswith("linux"):
+        return current.startswith("linux")
+    return target == current
+
+
+def _normalize_update_member(name):
+    name = str(name or "").replace("\\", "/").lstrip("/")
+    parts = [part for part in name.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return ""
+    if len(name) >= 2 and name[1] == ":":
+        return ""
+    return "/".join(parts)
+
+
+def _atomic_write_update_file(target, content, executable=False):
+    """Replace one update file atomically and preserve/assign executable mode."""
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    old_mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else None
+    temp_target = target.with_name(f".{target.name}.{uuid.uuid4().hex}.update-tmp")
+    try:
+        temp_target.write_bytes(content)
+        if executable:
+            temp_target.chmod((old_mode or 0o644) | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        elif old_mode is not None:
+            temp_target.chmod(old_mode)
+        os.replace(temp_target, target)
+    finally:
+        try:
+            temp_target.unlink()
+        except OSError:
+            pass
 
 
 def _version_key(value):
@@ -714,17 +766,40 @@ def build_submission_record(file_info, student_name, assignment_id, assignment_n
         record.update(extra)
     return record
 
-# 微信文件目录（按平台区分）
-if sys.platform == "darwin":
-    # macOS 微信文件存储路径
-    _WECHAT_MAC_CONTAINER = Path.home() / "Library" / "Containers" / "com.tencent.xinWeChat"
-    _WECHAT_MAC_APP_SUPPORT = _WECHAT_MAC_CONTAINER / "Data" / "Library" / "Application Support" / "com.tencent.xinWeChat"
-    WECHAT_FILES_BASE = _WECHAT_MAC_APP_SUPPORT
-    XWECHAT_BASE = _WECHAT_MAC_CONTAINER / "Data"
-else:
-    WECHAT_FILES_BASE = Path.home() / "Documents" / "WeChat Files"
-    # 微信 4.x 新路径（C:\Users\xxx\xwechat_files\）
-    XWECHAT_BASE = Path.home() / "xwechat_files"
+def wechat_base_candidates(home=None, platform=None):
+    """Return platform-specific WeChat storage roots without assuming one bundle team id."""
+    home = Path(home or Path.home())
+    platform = platform or sys.platform
+    if platform == "darwin":
+        container = home / "Library" / "Containers" / "com.tencent.xinWeChat"
+        candidates = [
+            container / "Data" / "Documents" / "xwechat_files",
+            container / "Data" / "Library" / "Application Support" / "com.tencent.xinWeChat",
+            container / "Data",
+            container,
+            home / "Library" / "Application Support" / "com.tencent.xinWeChat",
+            home / "Documents" / "WeChat Files",
+            home / "xwechat_files",
+        ]
+        group_root = home / "Library" / "Group Containers"
+        try:
+            for group in sorted(group_root.glob("*.com.tencent.xinWeChat")):
+                candidates.extend([
+                    group / "Documents" / "xwechat_files",
+                    group / "Data" / "Documents" / "xwechat_files",
+                    group / "xwechat_files",
+                    group,
+                ])
+        except OSError:
+            pass
+        return list(dict.fromkeys(candidates))
+    return [home / "Documents" / "WeChat Files", home / "xwechat_files"]
+
+
+WECHAT_BASE_CANDIDATES = wechat_base_candidates()
+WECHAT_FILES_BASE = WECHAT_BASE_CANDIDATES[0]
+XWECHAT_BASE = WECHAT_BASE_CANDIDATES[1]
+_wechat_discovery_warnings = []
 
 # ---------------------------------------------------------------------------
 # 配置/数据管理
@@ -1396,24 +1471,72 @@ def release_server_lock():
 # ---------------------------------------------------------------------------
 
 def discover_wechat_accounts():
-    """自动发现微信文件目录（支持新旧版本路径）"""
+    """自动发现微信文件目录，并保留权限/访问诊断供设置页展示。"""
+    global _wechat_discovery_warnings
     accounts = []
-    # 旧版路径: Documents\WeChat Files\wxid_xxx\FileStorage\File
-    for base in (WECHAT_FILES_BASE, XWECHAT_BASE):
-        if not base.exists():
-            continue
-        for d in base.iterdir():
-            if not d.is_dir():
+    warnings = []
+    seen = set()
+
+    def add_account(account):
+        key = _path_key(account)
+        if key and key not in seen:
+            seen.add(key)
+            accounts.append(str(account))
+
+    for base in WECHAT_BASE_CANDIDATES:
+        try:
+            if not base.exists():
                 continue
-            # 旧版: d/FileStorage/File
-            file_dir = d / "FileStorage" / "File"
-            if file_dir.exists():
-                accounts.append(str(d))
-            # 新版 4.x: d/msg/file (如 xwechat_files\wxid_xxx_port\msg\file)
-            msg_file_dir = d / "msg" / "file"
-            if msg_file_dir.exists():
-                accounts.append(str(d))
+            if not os.access(str(base), os.R_OK | os.X_OK):
+                warnings.append(f"微信目录无访问权限: {base}")
+                continue
+        except OSError as exc:
+            warnings.append(f"微信目录无法访问: {base} ({exc})")
+            continue
+
+        roots = [base]
+        try:
+            roots.extend(d for d in base.iterdir() if d.is_dir())
+        except PermissionError:
+            warnings.append(f"微信目录被 macOS 拒绝访问: {base}")
+            continue
+        except OSError as exc:
+            warnings.append(f"微信目录读取失败: {base} ({exc})")
+            continue
+
+        for account in roots:
+            try:
+                if (account / "FileStorage" / "File").is_dir() or (account / "msg" / "file").is_dir():
+                    add_account(account)
+            except OSError as exc:
+                warnings.append(f"微信账户目录读取失败: {account} ({exc})")
+
+    _wechat_discovery_warnings = list(dict.fromkeys(warnings))
     return accounts
+
+
+def runtime_capabilities():
+    """Return optional runtime features and actionable platform warnings."""
+    libreoffice = _find_libreoffice()
+    warnings = []
+    if not libreoffice and sys.platform != "win32":
+        warnings.append("未检测到 LibreOffice，Word 文档转换和预览功能可能不可用。")
+    if not HAS_DOCX:
+        warnings.append("未安装 python-docx，.docx 文本提取功能不可用。")
+    if not HAS_PDF:
+        warnings.append("未安装 PyPDF2，PDF 文本提取功能不可用。")
+    if sys.platform == "darwin" and _wechat_discovery_warnings:
+        warnings.append("macOS 可能阻止了微信目录访问，请检查“隐私与安全性”中的文件与文件夹或完全磁盘访问权限。")
+    return {
+        "platform": sys.platform,
+        "python": ".".join(str(v) for v in sys.version_info[:3]),
+        "docx_text": HAS_DOCX,
+        "pdf_text": HAS_PDF,
+        "libreoffice": bool(libreoffice),
+        "libreoffice_path": libreoffice,
+        "word_preview": bool(libreoffice) or sys.platform == "win32",
+        "warnings": list(dict.fromkeys(warnings)),
+    }
 
 def get_watch_dirs():
     """获取需要监控的所有微信目录（兼容新旧版本路径）"""
@@ -3387,10 +3510,18 @@ class APIHandler(SimpleHTTPRequestHandler):
                                               is_local=self._request_is_local()))
 
         elif path == "/api/status":
+            watch_dirs = get_effective_watch_dirs()
+            discovered_accounts = discover_wechat_accounts()
             self._json({
                 "watching": watcher.running,
                 "known_files": len(watcher.known_files),
-                "watch_dirs": get_effective_watch_dirs(),
+                "watch_dirs": watch_dirs,
+                "capabilities": runtime_capabilities(),
+                "wechat_discovery": {
+                    "accounts_found": len(discovered_accounts),
+                    "warnings": _wechat_discovery_warnings,
+                    "manual_selection_required": sys.platform == "darwin" and not bool(discovered_accounts),
+                },
             })
 
         elif path == "/api/health":
@@ -4361,6 +4492,20 @@ class APIHandler(SimpleHTTPRequestHandler):
             if not new_dir:
                 self._json({"ok": False, "msg": "路径不能为空"})
                 return
+            resolved_dir = _safe_resolve_path(new_dir)
+            if not resolved_dir or not resolved_dir.exists():
+                self._json({"ok": False, "msg": f"目录不存在，请检查路径后重试: {new_dir}"})
+                return
+            if not resolved_dir.is_dir():
+                self._json({"ok": False, "msg": f"所选路径不是文件夹: {new_dir}"})
+                return
+            if not os.access(str(resolved_dir), os.R_OK | os.X_OK):
+                msg = "目录没有读取权限"
+                if sys.platform == "darwin":
+                    msg += "，请在“系统设置 → 隐私与安全性”中授权终端、Python 或当前应用"
+                self._json({"ok": False, "msg": f"{msg}: {new_dir}"})
+                return
+            new_dir = str(resolved_dir)
             cfg = load_config_raw()
             scan_dirs = cfg.get("scan_dirs", [])
             if new_dir not in scan_dirs:
@@ -5220,15 +5365,12 @@ class APIHandler(SimpleHTTPRequestHandler):
             "py/pack.py",
             "py/repair_update.py",
             "requirements.txt",
-            "repair_update.bat",
-            "启动作业追踪器.bat",
-            "更新修复工具.bat",
-            "start.sh",
-        ]
+        ] + platform_update_files()
 
         manifest = {
             "app": "Assignment_Dashboard",
             "version": version,
+            "platform": sys.platform,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "files": package_files + list(LEGACY_UPDATE_ALIASES),
             "has_changelog": False,
@@ -5345,10 +5487,32 @@ class APIHandler(SimpleHTTPRequestHandler):
                 if bad:
                     self._json({"ok": False, "msg": f"更新包损坏: {bad}"})
                     return
-                file_list = zf.namelist()
+                raw_file_list = [name for name in zf.namelist() if not name.endswith("/")]
+                names_by_member = {}
+                for raw_name in raw_file_list:
+                    member = _normalize_update_member(raw_name)
+                    if not member:
+                        self._json({"ok": False, "msg": f"更新包包含不安全路径: {raw_name}"})
+                        return
+                    if member in names_by_member:
+                        self._json({"ok": False, "msg": f"更新包包含重复路径: {member}"})
+                        return
+                    names_by_member[member] = raw_name
+                file_list = list(names_by_member)
         except zipfile.BadZipFile:
             self._json({"ok": False, "msg": "无效的 ZIP 文件"})
             return
+
+        if "manifest.json" in names_by_member:
+            try:
+                with zipfile.ZipFile(io.BytesIO(zip_data), "r") as zf:
+                    manifest_data = json.loads(zf.read(names_by_member["manifest.json"]).decode("utf-8"))
+                if not _update_platform_matches(manifest_data.get("platform")):
+                    self._json({"ok": False, "msg": f"更新包目标平台不匹配: {manifest_data.get('platform')}"})
+                    return
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                self._json({"ok": False, "msg": f"manifest.json 无效: {exc}"})
+                return
 
         # 3. 验证关键文件存在
         missing = [f for f in UPDATE_REQUIRED_FILES if f not in file_list]
@@ -5399,6 +5563,12 @@ class APIHandler(SimpleHTTPRequestHandler):
                 fp = BASE_DIR / item
                 if fp.exists():
                     backup_entries.append((str(fp), item))
+            backed_up = {arcname for _path, arcname in backup_entries}
+            for member in file_list:
+                fp = BASE_DIR / member
+                if fp.exists() and fp.is_file() and member not in backed_up:
+                    backup_entries.append((str(fp), member))
+                    backed_up.add(member)
             # 也备份 data 目录
             data_dir = BASE_DIR / "data"
             if data_dir.exists():
@@ -5417,8 +5587,9 @@ class APIHandler(SimpleHTTPRequestHandler):
         # 6. 解压替换文件
         updated_files = []
         try:
+            created_files = []
             with zipfile.ZipFile(io.BytesIO(zip_data), "r") as zf:
-                for member in zf.namelist():
+                for member, raw_member in names_by_member.items():
                     # 保护用户数据：不覆盖 data/*.json 文件
                     if member.startswith("data/") and member.endswith(".json"):
                         print(f"[Update] 跳过用户数据文件: {member}")
@@ -5431,17 +5602,16 @@ class APIHandler(SimpleHTTPRequestHandler):
                     except ValueError:
                         print(f"[Update] 安全跳过: {member} (路径越界)")
                         continue
-                    # 创建父目录
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    # 提取文件
-                    content = zf.read(member)
-                    target_path.write_bytes(content)
+                    if not target_path.exists():
+                        created_files.append(target_path)
+                    content = zf.read(raw_member)
+                    _atomic_write_update_file(target_path, content, executable=member.endswith(".sh"))
                     updated_files.append(member)
                     print(f"[Update] 已更新: {member}")
         except Exception as e:
             # 回滚：恢复备份
             print(f"[Update] 解压失败，开始回滚: {e}")
-            self._restore_backup(backup_path)
+            self._restore_backup(backup_path, remove_paths=created_files)
             self._json({"ok": False, "msg": f"更新失败，已自动回滚: {str(e)[:200]}"})
             return
 
@@ -5475,15 +5645,29 @@ class APIHandler(SimpleHTTPRequestHandler):
             "has_announcement": has_announcement,
         })
 
-    def _restore_backup(self, backup_path):
+    def _restore_backup(self, backup_path, remove_paths=None):
         """从备份恢复文件"""
         import zipfile
         try:
             if not backup_path.exists():
                 print("[Update] 备份文件不存在，无法回滚")
                 return
+            for path in remove_paths or []:
+                try:
+                    resolved = Path(path).resolve()
+                    resolved.relative_to(BASE_DIR.resolve())
+                    if resolved.is_file() or resolved.is_symlink():
+                        resolved.unlink()
+                except (OSError, ValueError):
+                    pass
             with zipfile.ZipFile(backup_path, "r") as zf:
-                zf.extractall(BASE_DIR)
+                for raw in zf.namelist():
+                    member = _normalize_update_member(raw)
+                    if not member or raw.endswith("/"):
+                        continue
+                    target = (BASE_DIR / member).resolve()
+                    target.relative_to(BASE_DIR.resolve())
+                    _atomic_write_update_file(target, zf.read(raw), executable=member.endswith(".sh"))
             print("[Update] 回滚成功")
         except Exception as e:
             print(f"[Update] 回滚失败: {e}")
@@ -5806,6 +5990,8 @@ def _restart_server():
         helper_kwargs = {"cwd": os.path.dirname(os.path.abspath(__file__))}
         if sys.platform == "win32":
             helper_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        else:
+            helper_kwargs["start_new_session"] = True
         helper_proc = subprocess.Popen(
             [sys.executable, helper_path, "--port", str(port), "--", sys.executable,
              os.path.abspath(__file__)] + sys.argv[1:],
