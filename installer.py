@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 作业追踪器 - 图形化安装向导
-维护者: Assignment_Dashboard 项目贡献者
+维护者: Assignment Dashboard 项目贡献者
 7步安装流程：欢迎→环境检测→班级设置→安装与目录配置→文件类型设置→科目关键词→安装执行
 """
 
@@ -60,8 +60,12 @@ FILE_TYPE_GROUPS = {
 # 需要安装到目标目录的文件列表
 INSTALL_FILES = [
     "server.py",
+    "ai_classifier.py",
+    "classifier_features.py",
+    "classifier_trainer.py",
     "restart_helper.py",
     "dashboard.html",
+    "dashboard_modern.html",
     "pack.py",
     "repair_update.py",
     "repair_update.bat",
@@ -1437,6 +1441,15 @@ class InstallerWizard:
                 "poll_interval": 5,
                 "templates": [],
                 "ignored_subjects": [],
+                "ai_classifier": {
+                    "mode": "rules",
+                    "sensitivity": 0.70,
+                    "sensitivity_preset": "balanced",
+                    "active_semester": "",
+                    "priority": "rules_first",
+                    "auto_train": True,
+                    "class_aliases": [],
+                },
                 "version": APP_VERSION
             }
             

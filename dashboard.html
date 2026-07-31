@@ -789,7 +789,7 @@
     border: 1px solid rgba(255,255,255,0.18);
   }
 
-  /* Announcement Content Preview (admin list) */
+  /* Announcement Content Preview (developer list) */
   .ann-content-preview {
     max-height: 120px; overflow-y: auto;
     font-size: 12px; padding: 8px 10px;
@@ -1560,17 +1560,17 @@
       </div>
     </div>
 
-    <!-- 现代版入口 -->
+    <!-- 现代版分类大脑入口 -->
     <div class="mgmt-card">
       <div class="mgmt-header" onclick="this.parentElement.classList.toggle('mgmt-expanded')">
         <span class="mgmt-toggle">▸</span>
-        <h3>🎨 现代版前端</h3>
+        <h3>🧠 分类大脑与本地模型</h3>
         <div style="display:flex;gap:8px;margin-left:auto;" onclick="event.stopPropagation()">
-          <button class="btn btn-primary" onclick="openModernFrontend()" style="font-size:11px;padding:4px 10px">打开现代版</button>
+          <button class="btn btn-primary" onclick="openModernFrontend('brain')" style="font-size:11px;padding:4px 10px">打开分类大脑</button>
         </div>
       </div>
       <div class="mgmt-body">
-        <div class="mgmt-hint">主题预设、现代视觉和新版管理体验都在现代版前端中调整；旧版这里只保留跳转入口，避免重复配置。</div>
+        <div class="mgmt-hint">课程规则、本地模型训练、班级上下文和样本管理集中在现代版“分类大脑”；经典版保留稳定业务流程和直达入口。</div>
       </div>
     </div>
 
@@ -1650,8 +1650,29 @@
       </div>
     </div>
 
-    <!-- 公告管理（仅管理员） -->
-    <div class="mgmt-card admin-only" style="display:none">
+    <div class="mgmt-card mgmt-expanded">
+      <div class="mgmt-header" onclick="this.parentElement.classList.toggle('mgmt-expanded')">
+        <span class="mgmt-toggle">▾</span><h3>文件预览预热</h3><span class="mgmt-count" id="classic-preview-warmup-pill">检测中</span>
+      </div>
+      <div class="mgmt-body">
+        <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--card-border);border-radius:8px;background:var(--bg);font-size:13px">
+          <span><strong>启动时自动预热</strong><br><span style="color:var(--text-secondary)">提前生成最近 20 个 Word 文件的 PDF 缓存，首次预览会更快。</span></span>
+          <input type="checkbox" id="classic-preview-warmup-toggle" onchange="togglePreviewWarmupClassic(this.checked)" style="width:auto">
+        </label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+          <button class="btn btn-primary" id="classic-preview-warmup-start" onclick="startPreviewWarmupClassic()">立即预热</button>
+          <span class="mgmt-count" id="classic-preview-warmup-progress">等待操作</span>
+        </div>
+        <div id="classic-preview-warmup-note" class="mgmt-hint" style="margin-top:8px">仅处理仪表盘记录、已收作业和已启用的公示文件夹。</div>
+      </div>
+    </div>
+
+    <div class="developer-discovery-note developer-only" style="display:none;margin:0 0 12px;padding:9px 12px;border-left:3px solid var(--primary);color:var(--text-secondary);font-size:12px;line-height:1.6">
+      恭喜你发现了开发者模式界面，欢迎从使用者变成一起打磨系统的开发者。
+    </div>
+
+    <!-- 公告管理（仅开发者模式） -->
+    <div class="mgmt-card developer-only" style="display:none">
       <div class="mgmt-header" onclick="this.parentElement.classList.toggle('mgmt-expanded')">
         <span class="mgmt-toggle">▸</span>
         <h3>📢 公告管理</h3>
@@ -1682,7 +1703,7 @@
           </div>
           <div style="margin-bottom:10px">
             <label style="font-size:12px;color:var(--text-secondary)">发布者</label>
-            <input type="text" id="annAuthor" value="系统管理员" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--card-border);background:var(--bg);color:var(--text);font-size:13px;margin-top:4px">
+            <input type="text" id="annAuthor" value="项目开发者" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--card-border);background:var(--bg);color:var(--text);font-size:13px;margin-top:4px">
           </div>
         </div>
         <div style="margin-bottom:10px">
@@ -1714,8 +1735,8 @@
       </div>
     </div>
 
-    <!-- 更新包生成（仅管理员） -->
-    <div class="mgmt-card admin-only" style="display:none">
+    <!-- 更新包生成（仅开发者模式） -->
+    <div class="mgmt-card developer-only" style="display:none">
       <div class="mgmt-header" onclick="this.parentElement.classList.toggle('mgmt-expanded')">
         <span class="mgmt-toggle">▸</span>
         <h3>📦 一键生成更新包</h3>
@@ -1743,8 +1764,8 @@
       </div>
     </div>
 
-    <!-- 服务器控制（仅管理员） -->
-    <div class="mgmt-card admin-only" style="display:none">
+    <!-- 服务器控制（仅开发者模式） -->
+    <div class="mgmt-card developer-only" style="display:none">
       <div class="mgmt-header" onclick="this.parentElement.classList.toggle('mgmt-expanded')">
         <span class="mgmt-toggle">▸</span>
         <h3>🖥 服务器控制</h3>
@@ -1826,13 +1847,15 @@
 const API = '';
 let dashboardData = null;
 let classicNetworkAccess = {};
+let classicPreviewWarmup = {};
+let classicPreviewWarmupTimer = null;
 let currentTab = 'dashboard';
 let scanDir = '';
 let unmatchedExpanded = false;
 let previewFilePath = null;        // 当前预览的文件路径
 let window__analysisResults = {};  // 分析结果缓存 { idx: match_data }
 let currentDetailAssignmentId = null;  // 当前作业详情页的 assignment_id
-let isAdmin = false;                    // 是否为管理员模式
+let isDeveloperMode = false;            // 是否为开发者模式
 let announcementList = [];              // 公告编辑器列表
 let annEditingIndex = -1;              // 公告编辑索引
 let pendingAnnouncementImport = null;   // 拖入的公告文件预览数据
@@ -1859,17 +1882,22 @@ function showErrorBanner(msg) {
   setTimeout(function() { if (banner.parentElement) banner.remove(); }, 15000);
 }
 
-function openModernFrontend() {
-  window.location.href = new URL('/modern', window.location.href).href;
+function openModernFrontend(page = '') {
+  const path = isDeveloperMode ? '/modern?developer=true' : '/modern';
+  const target = new URL(path, window.location.href);
+  if (page) target.hash = page;
+  window.location.href = target.href;
 }
 
 // ==================== Init ====================
 async function init() {
-  // 检测管理员模式
+  // 检测开发者模式；保留 admin 参数兼容旧链接
   const urlParams = new URLSearchParams(window.location.search);
-  isAdmin = urlParams.get('admin') === 'true';
-  if (isAdmin) {
-    document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
+  const developerParam = urlParams.get('developer');
+  const legacyAdminParam = urlParams.get('admin');
+  isDeveloperMode = developerParam === 'true' || legacyAdminParam === 'true';
+  if (isDeveloperMode) {
+    document.querySelectorAll('.developer-only').forEach(el => el.style.display = '');
     initAnnounceEditor();
   }
 
@@ -1899,6 +1927,7 @@ async function init() {
     showErrorBanner('加载配置失败: ' + e.message);
   }
   await loadNetworkAccessClassic();
+  await loadPreviewWarmupClassic();
   
   try {
     await refreshAll();
@@ -3073,6 +3102,56 @@ async function removeScanDir(dir) {
   }
 }
 
+async function loadPreviewWarmupClassic() {
+  try {
+    classicPreviewWarmup = await apiGet('/api/preview-warmup');
+    renderPreviewWarmupClassic();
+  } catch (e) {
+    const note = document.getElementById('classic-preview-warmup-note');
+    if (note) note.textContent = '预热状态加载失败：' + (e.message || e);
+  }
+}
+function renderPreviewWarmupClassic() {
+  const warmup = classicPreviewWarmup || {};
+  const running = warmup.status === 'scanning' || warmup.status === 'running';
+  const names = { idle: '未运行', scanning: '扫描文件', running: '预热中', complete: '已完成', error: '失败' };
+  const toggle = document.getElementById('classic-preview-warmup-toggle');
+  const pill = document.getElementById('classic-preview-warmup-pill');
+  const progress = document.getElementById('classic-preview-warmup-progress');
+  const button = document.getElementById('classic-preview-warmup-start');
+  const note = document.getElementById('classic-preview-warmup-note');
+  if (toggle) toggle.checked = !!warmup.enabled;
+  if (pill) pill.textContent = names[warmup.status] || '未运行';
+  if (progress) progress.textContent = running
+    ? `${warmup.ready || 0}/${warmup.queued || 0} 已生成`
+    : `共 ${warmup.total || 0} · 缓存 ${warmup.cached || 0} · 新增 ${warmup.ready || 0} · 失败 ${warmup.failed || 0}`;
+  if (button) button.disabled = running;
+  if (note) note.textContent = warmup.error
+    ? '预热失败：' + warmup.error
+    : '转换在隐藏隔离进程中串行执行；异常文件超时后会被终止，不会打开 Word 窗口。';
+  clearTimeout(classicPreviewWarmupTimer);
+  if (running) classicPreviewWarmupTimer = setTimeout(loadPreviewWarmupClassic, 1000);
+}
+async function togglePreviewWarmupClassic(enabled) {
+  try {
+    classicPreviewWarmup = await apiPost('/api/preview-warmup/configure', { enabled });
+    renderPreviewWarmupClassic();
+    showToast(enabled ? '已开启启动自动预热' : '已关闭启动自动预热');
+  } catch (e) {
+    alert('保存失败：' + (e.message || e));
+    renderPreviewWarmupClassic();
+  }
+}
+async function startPreviewWarmupClassic() {
+  try {
+    classicPreviewWarmup = await apiPost('/api/preview-warmup/start', {});
+    renderPreviewWarmupClassic();
+    showToast('文件预览预热已在后台启动');
+  } catch (e) {
+    alert('启动预热失败：' + (e.message || e));
+  }
+}
+
 async function loadNetworkAccessClassic() {
   try {
     classicNetworkAccess = await apiGet('/api/network-access');
@@ -3133,7 +3212,7 @@ async function copyClassicLanInfo() {
   alert('局域网地址和口令已复制');
 }
 
-// ==================== 服务器控制（仅管理员） ====================
+// ==================== 服务器控制（仅开发者模式） ====================
 
 async function renderServerStatus() {
   const badge = document.getElementById('server-status-badge');
@@ -4980,7 +5059,7 @@ function addTutorialResetButton() {
 
 // ==================== Help Center ====================
 const FAQ_DATA = [
-  { category: '新手流程', q: '第一次安装后应该按什么顺序配置？', a: '建议按这个顺序来：\n1. 打开管理面板，先导入学生名单。\n2. 检查扫描目录，确认同学新发来的文件会落到这些目录里。\n3. 设置公示文件夹，用来集中展示和回填实验/作业文件。\n4. 检查文件类型和识别关键词，确保常用的 .docx、.pdf、.zip 等已启用。\n5. 回到仪表盘，点击「立即扫描」确认能识别文件。\n6. 如果给别人更新系统，用管理员模式的一键生成更新包。' },
+  { category: '新手流程', q: '第一次安装后应该按什么顺序配置？', a: '建议按这个顺序来：\n1. 打开管理面板，先导入学生名单。\n2. 检查扫描目录，确认同学新发来的文件会落到这些目录里。\n3. 设置公示文件夹，用来集中展示和回填实验/作业文件。\n4. 检查文件类型和识别关键词，确保常用的 .docx、.pdf、.zip 等已启用。\n5. 回到仪表盘，点击「立即扫描」确认能识别文件。\n6. 如果给别人更新系统，用开发者模式的一键生成更新包。' },
   { category: '新手流程', q: '同学提交文件名有什么建议？', a: '建议统一要求文件名包含姓名、作业关键词和作业批次，例如：\n张三_第一次课程报告.docx\n李四_项目一作业.pdf\n王五_数字电子技术实验报告.docx\n系统主要靠文件名识别学生、科目和作业批次；文件名越规范，手动处理越少。' },
   { category: '新手流程', q: '新电脑上最容易漏掉什么？', a: '常见漏项有三类：\n1. 微信没有开启文件自动下载，文件消息看得到但本地目录没有文件。\n2. 安装时添加的扫描目录不是实际下载目录。\n3. 文件名没有包含「作业」「报告」「实验」等识别关键词。\n遇到问题先看管理面板里的监控目录/扫描目录是否存在，再点一次「立即扫描」。' },
   { category: '基础使用', q: '如何开始使用这个系统？', a: '首先在管理面板中添加学生名单（姓名必填，学号和拼音可选）。然后确认微信 PC 端开启了文件自动下载，系统会自动监控收到的作业文件并匹配学生。\n如果你还设置了额外扫描目录，新版本会把这些目录也纳入实时监听。' },
@@ -4992,20 +5071,21 @@ const FAQ_DATA = [
   { category: '作业设置', q: '如何添加新的作业科目？', a: '在作业列表页面，点击「+ 添加作业」按钮。填写作业名称、科目、关键词等信息。系统也会自动从作业目录检测新的科目和作业。' },
   { category: '文件归类', q: '文件是如何自动归类的？', a: '系统根据文件名中的科目关键词（如"课程报告""项目作业"，也可以是"数字电子技术"等具体课程）和作业批次（如"第一次""项目一"）自动归类文件到对应目录。目录结构为：已收作业/科目/作业批次/学生姓名/。' },
   { category: '文件归类', q: '未匹配的文件怎么处理？', a: '未匹配到学生或作业的文件会显示在仪表盘底部的「未归类文件」列表中。你可以手动将其分配给对应学生，或点击忽略按钮跳过该文件。' },
-  { category: '公示文件夹', q: '公示文件夹是什么？', a: '公示文件夹是一个给课程集中查看和补录文件的目录，通常放在桌面课程文件夹下，例如：桌面/课程班级/公示文件夹。\n系统会把已识别的学生文件同步一份到公示文件夹，方便你按科目和作业批次查看；同时也可以从公示文件夹回填历史文件到「已收作业」。' },
-  { category: '公示文件夹', q: '公示文件夹和已收作业有什么区别？', a: '已收作业是系统内部整理目录，结构更细：科目/作业批次/学生姓名/文件。\n公示文件夹是对外查看和补录用的目录，结构更平铺：科目/作业批次/学生_文件。\n简单说：已收作业用于系统管理，公示文件夹用于课程展示和历史回填。' },
-  { category: '公示文件夹', q: '什么时候需要点“从公示目录回填已收作业”？', a: '这些情况适合回填：\n1. 你手动把历史作业文件放进了公示文件夹。\n2. 旧版本已经有公示目录文件，但 submissions 记录不完整。\n3. 换电脑或重装后，需要让仪表盘重新认识公示目录中的文件。\n回填会扫描公示文件夹，尝试按文件名和目录结构匹配学生、科目和作业批次。' },
+  { category: '公示文件夹', q: '公示文件夹是什么？', a: '公示文件夹是面向课程查看、分享和历史恢复的文件副本目录，不是系统内部的主要归档目录，也不是实时监听目录。文件完整识别出学生、科目和具体作业后，会先进入「已收作业」，再同步一份到公示文件夹。目录通常按“科目/作业批次/学生姓名_文件名”保存，方便按科目和作业查看。' },
+  { category: '公示文件夹', q: '公示文件夹和已收作业有什么区别？', a: '「已收作业」是系统内部归档目录，结构更细：科目/作业批次/学生姓名/文件，主要供仪表盘管理、统计和打包使用。公示文件夹是便于课程查看、分享和历史回填的副本目录，结构更平铺：科目/作业批次/学生_文件。公示文件夹不参与实时监听。' },
+  { category: '公示文件夹', q: '什么时候需要点“从公示目录回填已收作业”？', a: '这些情况适合回填：\n1. 你手动把历史作业文件放进了公示文件夹。\n2. 旧版本已经有公示目录文件，但 submissions 记录不完整。\n3. 换电脑或重装后，需要让仪表盘重新认识公示目录中的文件。\n4. 需要让刚整理好的文件进入「已收作业」。\n公示目录不会被实时 watcher 直接处理；服务器启动时，启用公示文件夹的情况下会自动回填一次，也可以在管理页手动回填。回填会按文件名和目录结构匹配学生、科目和作业批次。' },
   { category: '公示文件夹', q: '公示文件夹回填会不会生成重复文件？', a: '新版已经修复公示目录自我复制问题：从公示文件夹回填时，不会再把公示目录里的文件复制回公示目录。\n如果目录里已经有类似「张三_张三_文件.docx」这样的重复前缀文件，回填会把它和「张三_文件.docx」识别为同一份文件，并清理可判定的重复项。\n重要提醒：如果你担心误删，先备份公示文件夹，再执行回填。' },
   { category: '公示文件夹', q: '公示文件夹应该怎么整理文件名？', a: '推荐格式是：学生姓名_科目_作业批次_说明，例如：\n张三_课程报告_第一次.docx\n李四_项目作业_项目一.pdf\n王五_数字电子技术_实验报告.docx\n不要手动反复加学生名前缀，例如「张三_张三_张三_报告.docx」。新版会尝试折叠重复前缀，但规范命名最稳。' },
   { category: '公示文件夹', q: '公示文件夹里同时有 docx 和 pdf 算重复吗？', a: '不一定。docx 和 pdf 通常是不同格式，系统会按文件名和扩展名分别处理。\n如果是同一份内容的 Word 和 PDF，建议保留你实际要公示或归档的版本；如果两个都需要留，就让文件名能区分用途，例如「原稿」和「导出版」。' },
   { category: '打包下载', q: '如何打包下载某个科目的所有作业？', a: '在作业列表页面，每个科目卡片右上角有「📦 打包」按钮。点击即可将当前科目所有已提交文件按科目/实验/学生结构打包为 ZIP 下载。' },
   { category: '系统更新', q: '如何更新系统到最新版本？', a: '在管理面板的「系统更新」卡片中，拖拽或点击上传 .zip 更新包。系统会自动备份当前版本、解压替换文件并重启服务。更新完成后会显示更新日志。\n如果更新包里包含公告，刷新浏览器后会自动展示公告。' },
-  { category: '系统更新', q: '管理员如何生成更新包？', a: '进入管理员模式，在更新包区域填写版本号。\n如果本次要带公告或更新日志，先在公告管理里添加到公告列表，再点击生成更新包。\n生成的 zip 可以发给别人，对方拖到系统更新区域即可更新。' },
+  { category: '系统更新', q: '开发者如何生成更新包？', a: '进入开发者模式，在更新包区域填写版本号。\n如果本次要带公告或更新日志，先在公告管理里添加到公告列表，再点击生成更新包。\n生成的 zip 可以发给别人，对方拖到系统更新区域即可更新。' },
   { category: '常见问题', q: '如何让手机访问仪表盘？', a: '在管理面板开启“允许局域网访问”，确认后服务会自动重启。把显示的局域网地址和访问口令输入手机，手机和电脑必须处于同一个可信 Wi-Fi。不要把端口映射到公网。' },
+  { category: '文件预览', q: '如何让 Word 文件打开预览更快？', a: '在管理面板的“文件预览预热”中开启“启动时自动预热”，下次启动会提前生成 PDF 缓存；也可以点击“立即预热”。异常文件超时后会被安全跳过，不会自动打开 Word。' },
   { category: '系统更新', q: '更新失败怎么办？', a: '系统会在更新前自动创建备份（保存在 backups/ 目录）。如果更新失败会自动回滚。\n如果浏览器没有自动恢复，先关闭启动窗口，再重新运行「启动作业追踪器.bat」。必要时可从 backups/ 目录手动恢复。' },
   { category: '主题与现代版', q: '现代版入口在哪里？', a: '新版现代前端入口是 /modern。旧版管理面板里的「现代版与主题」卡片也提供打开入口。\n当前阶段 /dashboard 仍是稳定旧版，/modern 用于试用和逐步补齐功能。' },
   { category: '主题与现代版', q: '主题保存后会影响哪些地方？', a: '主题配置保存在 data/config.json 的 ui_theme 字段中。现代版会完整读取主题预设并应用到页面颜色。\n旧版暂时只提供主题入口和预设保存，不大范围重绘旧界面，避免影响稳定使用。' },
-  { category: '主题与现代版', q: '更新包会带上现代版文件吗？', a: '新版更新包会包含 dashboard_modern.html，因此对方更新后可以直接打开 /modern。\n主题是否随更新包发布会在后续管理员发布流程里继续完善；当前 MVP 已提供主题 API 和保存能力。' },
+  { category: '主题与现代版', q: '更新包会带上现代版文件吗？', a: '新版更新包会包含 dashboard_modern.html，因此对方更新后可以直接打开 /modern。\n主题是否随更新包发布会在后续开发者发布流程里继续完善；当前 MVP 已提供主题 API 和保存能力。' },
   { category: '常见问题', q: '为什么有些文件没有被检测到？', a: '系统只识别文件名中包含关键词（如"作业""报告""实验"等）的已启用文件类型。\n排查顺序：\n1. 文件是否真的在监控目录或扫描目录中。\n2. 文件类型是否已启用。\n3. 文件名是否包含关键词。\n4. 文件是否刚下载完成，临时文件会被跳过。\n5. 该文件是否已经被 watcher_state 记录为已知文件。' },
   { category: '常见问题', q: '如何修改班级名称和文件夹路径？', a: '班级名称和路径存储在 data/config.json 中。可以编辑 class_name 和 class_folder 字段来修改。修改后重启服务即可生效。' },
 ];
@@ -5128,7 +5208,7 @@ setTimeout(() => {
 }, 1500);
 
 // ============================================================
-// 公告编辑器（仅管理员）
+// 公告编辑器（仅开发者模式）
 // ============================================================
 function initAnnounceEditor() {
   const contentEl = document.getElementById('annContent');
@@ -5155,7 +5235,7 @@ function publishToList() {
   const content = document.getElementById('annContent').value.trim();
   if (!title) { showToast('请输入公告标题', 'error'); return; }
   if (!content) { showToast('请输入公告内容', 'error'); return; }
-  const ann = { id: 'ann_' + Date.now(), title, type, version: version || '1.0.0', content, timestamp: new Date().toISOString(), author: author || '系统管理员' };
+  const ann = { id: 'ann_' + Date.now(), title, type, version: version || '1.0.0', content, timestamp: new Date().toISOString(), author: author || '项目开发者' };
   if (annEditingIndex >= 0) {
     announcementList[annEditingIndex] = { ...ann, id: announcementList[annEditingIndex].id };
     annEditingIndex = -1;
@@ -5173,7 +5253,7 @@ function clearAnnForm() {
   document.getElementById('annTitle').value = '';
   document.getElementById('annType').value = 'changelog';
   document.getElementById('annVersion').value = '';
-  document.getElementById('annAuthor').value = '系统管理员';
+  document.getElementById('annAuthor').value = '项目开发者';
   document.getElementById('annContent').value = '';
   document.getElementById('annPreview').innerHTML = '<em style="color:var(--text-secondary);opacity:0.6">在左侧输入内容后此处显示预览</em>';
   annEditingIndex = -1;
@@ -5209,7 +5289,7 @@ function editAnnouncement(index) {
   document.getElementById('annTitle').value = ann.title;
   document.getElementById('annType').value = ann.type || 'changelog';
   document.getElementById('annVersion').value = ann.version || '';
-  document.getElementById('annAuthor').value = ann.author || '系统管理员';
+  document.getElementById('annAuthor').value = ann.author || '项目开发者';
   document.getElementById('annContent').value = ann.content || '';
   annEditingIndex = index;
   updateAnnPreview();
@@ -5231,7 +5311,7 @@ function exportAnnouncementFile() {
   const maxVersion = versions.length > 0 ? versions.sort().reverse()[0] : '1.0.0';
   const exportData = {
     version: maxVersion,
-    announcements: announcementList.map(a => ({ id: a.id, title: a.title, type: a.type || 'notice', version: a.version || maxVersion, content: a.content, timestamp: a.timestamp, author: a.author || '系统管理员' }))
+    announcements: announcementList.map(a => ({ id: a.id, title: a.title, type: a.type || 'notice', version: a.version || maxVersion, content: a.content, timestamp: a.timestamp, author: a.author || '项目开发者' }))
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5253,7 +5333,7 @@ function currentAnnouncementPayload() {
       version: a.version || maxVersion,
       content: a.content,
       timestamp: a.timestamp,
-      author: a.author || '系统管理员'
+      author: a.author || '项目开发者'
     }))
   };
 }
@@ -5345,7 +5425,7 @@ function importPendingAnnouncements() {
     version: a.version || pendingAnnouncementImport.version || '1.0.0',
     content: a.content || '',
     timestamp: a.timestamp || new Date().toISOString(),
-    author: a.author || '系统管理员'
+    author: a.author || '项目开发者'
   })).filter(a => !existingIds.has(a.id));
   announcementList = [...announcementList, ...incoming];
   announcementList.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
