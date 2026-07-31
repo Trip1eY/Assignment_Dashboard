@@ -42,6 +42,8 @@ COMMON_BACKUP_FILES = (
     "py/launcher.py",
     "py/server.py",
     "py/ai_classifier.py",
+    "py/classifier_features.py",
+    "py/classifier_trainer.py",
     "py/restart_helper.py",
     "html/dashboard.html",
     "html/dashboard_modern.html",
@@ -72,11 +74,11 @@ def log(message):
 
 
 def normalize_member(name):
-    name = str(name).replace("\\", "/").lstrip("/")
+    name = str(name).replace("\\", "/")
+    if name.startswith("/") or (len(name) >= 2 and name[1] == ":"):
+        return None
     parts = [p for p in name.split("/") if p not in ("", ".")]
     if not parts or any(p == ".." for p in parts):
-        return None
-    if Path(name).is_absolute() or (len(name) >= 2 and name[1] == ":"):
         return None
     return "/".join(parts)
 

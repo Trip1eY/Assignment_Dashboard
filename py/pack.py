@@ -41,6 +41,8 @@ PACK_CONFIG = {
         "py/launcher.py",
         "py/server.py",
         "py/ai_classifier.py",
+        "py/classifier_features.py",
+        "py/classifier_trainer.py",
         "py/restart_helper.py",
         "html/dashboard.html",
         "html/dashboard_modern.html",

@@ -9,6 +9,8 @@ a = Analysis(
         ('py/launcher.py', 'py'),
         ('py/server.py', 'py'),
         ('py/ai_classifier.py', 'py'),
+        ('py/classifier_features.py', 'py'),
+        ('py/classifier_trainer.py', 'py'),
         ('py/restart_helper.py', 'py'),
         ('html/dashboard.html', 'html'),
         ('html/dashboard_modern.html', 'html'),

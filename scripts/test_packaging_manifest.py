@@ -21,6 +21,8 @@ RUNTIME_FILES = {
     "py/launcher.py",
     "py/server.py",
     "py/ai_classifier.py",
+    "py/classifier_features.py",
+    "py/classifier_trainer.py",
     "py/restart_helper.py",
     "html/dashboard.html",
     "html/dashboard_modern.html",
@@ -71,7 +73,12 @@ class PackagingManifestTest(unittest.TestCase):
         backup_files = set(literal_assignment(PY_DIR / "repair_update.py", "COMMON_BACKUP_FILES"))
         self.assertTrue(RUNTIME_FILES <= backup_files)
         required_files = set(literal_assignment(PY_DIR / "repair_update.py", "REQUIRED_FILES"))
-        update_required = RUNTIME_FILES - {"py/ai_classifier.py", "py/restart_helper.py"}
+        update_required = RUNTIME_FILES - {
+            "py/ai_classifier.py",
+            "py/classifier_features.py",
+            "py/classifier_trainer.py",
+            "py/restart_helper.py",
+        }
         self.assertTrue(update_required <= required_files)
 
     def test_update_validators_and_bugfix_builder_use_the_same_required_files(self):
