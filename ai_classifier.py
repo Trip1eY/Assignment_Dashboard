@@ -361,6 +361,41 @@ def _model_weight(priority):
     }.get(str(priority or ""), 0.25)
 
 
+def merge_signal_scores(rule_scores, model_scores, similarity_scores=None,
+                        model_weight=0.25):
+    """Merge candidate scores with one denominator shared by all labels."""
+    rule_scores = dict(rule_scores or {})
+    model_scores = dict(model_scores or {})
+    similarity_scores = dict(similarity_scores or {})
+    model_weight = max(0.0, min(1.0, float(model_weight)))
+    rule_weight = 1.0 - model_weight
+    similarity_weight = 0.35
+    total_weight = (
+        (rule_weight if rule_scores else 0.0)
+        + (model_weight if model_scores else 0.0)
+        + (similarity_weight if similarity_scores else 0.0)
+    ) or 1.0
+    labels = set(rule_scores) | set(model_scores) | set(similarity_scores)
+    merged = []
+    for label in labels:
+        rule_score = float(rule_scores.get(label, 0.0))
+        model_score = float(model_scores.get(label, 0.0))
+        similarity_score = float(similarity_scores.get(label, 0.0))
+        confidence = (
+            rule_weight * rule_score
+            + model_weight * model_score
+            + similarity_weight * similarity_score
+        ) / total_weight
+        merged.append({
+            "label": label,
+            "confidence": round(confidence, 4),
+            "rule_score": round(rule_score, 4),
+            "similarity_score": round(similarity_score, 4),
+            "model_score": round(model_score, 4),
+        })
+    return sorted(merged, key=lambda item: (-item["confidence"], str(item["label"])))
+
+
 def _with_diagnostics(result, parsed, rule_score=0.0, similarity_score=0.0,
                       model_score=0.0, margin=0.0):
     return {
@@ -397,27 +432,53 @@ def classify_subject(filename, assignments=None, rules=None, feedback=None,
         subject for subject, data in registry.items() if data.get("active", True)
     }
 
-    # A confirmed sample is stronger than all learned or generated signals.
+    # A confirmed sample is stronger than all learned or generated signals,
+    # but the same normalized filename can legitimately occur in several
+    # courses (for example, "实验1"). Never resolve that ambiguity by list order.
+    exact_subjects = []
     for item in reversed(list(examples or [])):
         subject = _clean_text(item.get("subject_group"), 80)
         if subject not in active_subjects:
             continue
         if _clean_text(item.get("normalized_text"), 500).casefold() == clean.casefold():
-            result = {
-                "status": "subject_matched",
-                "stage": "subject_candidate",
+            if subject not in exact_subjects:
+                exact_subjects.append(subject)
+    if len(exact_subjects) == 1:
+        subject = exact_subjects[0]
+        result = {
+            "status": "subject_matched",
+            "stage": "subject_candidate",
+            "subject_group": subject,
+            "confidence": 0.99,
+            "score": 99,
+            "source": "feedback",
+            "evidence": [f"命中已确认文件名记忆：{subject}"],
+            "subject_candidates": [{
                 "subject_group": subject,
                 "confidence": 0.99,
-                "score": 99,
                 "source": "feedback",
-                "evidence": [f"命中已确认文件名记忆：{subject}"],
-                "subject_candidates": [{
-                    "subject_group": subject,
-                    "confidence": 0.99,
-                    "source": "feedback",
-                }],
-            }
-            return _with_diagnostics(result, parsed, similarity_score=1.0, margin=1.0)
+            }],
+        }
+        return _with_diagnostics(result, parsed, similarity_score=1.0, margin=1.0)
+    exact_conflict_result = None
+    if len(exact_subjects) > 1:
+        result = {
+            "status": "subject_conflict",
+            "stage": "pending_archive",
+            "subject_group": "",
+            "confidence": 0.99,
+            "score": 99,
+            "source": "feedback_conflict",
+            "evidence": ["相同文件名记忆对应多个课程，等待确认"],
+            "subject_candidates": [{
+                "subject_group": subject,
+                "confidence": 0.99,
+                "source": "feedback_conflict",
+            } for subject in sorted(exact_subjects)],
+        }
+        exact_conflict_result = _with_diagnostics(
+            result, parsed, similarity_score=1.0, margin=0.0
+        )
 
     rule_result = _rules_classify_subject(
         filename,
@@ -446,6 +507,8 @@ def classify_subject(filename, assignments=None, rules=None, feedback=None,
         return _with_diagnostics(rule_result, parsed, rule_score=best_rule, margin=1.0)
     if rule_result.get("status") == "subject_conflict" and best_rule >= 0.90:
         return _with_diagnostics(rule_result, parsed, rule_score=best_rule, margin=0.0)
+    if exact_conflict_result:
+        return exact_conflict_result
 
     similarity = [
         item for item in classifier_trainer.similarity_predictions(
@@ -469,28 +532,20 @@ def classify_subject(filename, assignments=None, rules=None, feedback=None,
 
     similarity_scores = {item["label"]: item["confidence"] for item in similarity}
     model_scores = {item["label"]: item["confidence"] for item in model_predictions}
-    subjects = set(rule_candidates) | set(similarity_scores) | set(model_scores)
     model_weight = _model_weight(priority)
-    scored = []
-    for subject in subjects:
-        components = []
-        if subject in rule_candidates:
-            components.append((1.0 - model_weight, rule_candidates[subject]))
-        if subject in model_scores:
-            components.append((model_weight, model_scores[subject]))
-        if subject in similarity_scores:
-            components.append((0.35, similarity_scores[subject]))
-        weight_total = sum(weight for weight, _score in components) or 1.0
-        confidence = sum(weight * score for weight, score in components) / weight_total
-        scored.append({
-            "subject_group": subject,
-            "confidence": round(confidence, 4),
-            "rule_score": round(rule_candidates.get(subject, 0.0), 4),
-            "similarity_score": round(similarity_scores.get(subject, 0.0), 4),
-            "model_score": round(model_scores.get(subject, 0.0), 4),
-            "source": "merged",
-        })
-    scored.sort(key=lambda item: (-item["confidence"], item["subject_group"]))
+    scored = [{
+        "subject_group": item["label"],
+        "confidence": item["confidence"],
+        "rule_score": item["rule_score"],
+        "similarity_score": item["similarity_score"],
+        "model_score": item["model_score"],
+        "source": "merged",
+    } for item in merge_signal_scores(
+        rule_candidates,
+        model_scores,
+        similarity_scores,
+        model_weight,
+    )]
     best = scored[0] if scored else None
     runner = scored[1]["confidence"] if len(scored) > 1 else 0.0
     margin = best["confidence"] - runner if best else 0.0
@@ -536,13 +591,19 @@ def classify_assignment_model(filename, subject_group, examples=None, model_bund
         protected_terms=protected_terms,
     )
     clean = parsed["normalized_text"]
-    exact = []
+    exact_labels = []
     for item in reversed(list(examples or [])):
         if item.get("subject_group") != subject_group or not item.get("assignment_id"):
             continue
         if str(item.get("normalized_text") or "").casefold() == clean.casefold():
-            exact = [{"label": item["assignment_id"], "confidence": 0.99}]
-            break
+            label = str(item["assignment_id"])
+            if label not in exact_labels:
+                exact_labels.append(label)
+    exact = (
+        [{"label": exact_labels[0], "confidence": 0.99}]
+        if len(exact_labels) == 1
+        else []
+    )
     similarity = classifier_trainer.similarity_predictions(
         clean,
         examples or [],
@@ -559,6 +620,7 @@ def classify_assignment_model(filename, subject_group, examples=None, model_bund
     return {
         "preprocess": parsed,
         "exact": exact,
+        "exact_conflict": sorted(exact_labels) if len(exact_labels) > 1 else [],
         "similarity": similarity,
         "model": predictions,
     }
@@ -627,12 +689,13 @@ def build_professional_pack_prompt(profile, courses, known_aliases=None):
 2. subjects 的 key 必须严格来自上面的正式课程名称，不得新增、改写或合并课程。
 3. confirmed_aliases 只放可靠简称、常用缩写和明确的英文名称。
 4. 不确定的简称或联想必须放 suggested_aliases，不能放入 confirmed_aliases。
-5. keywords 放课程知识点、专业术语、实验器件、软件工具和常见课程关键词。
+5. keywords 放课程知识点、专业术语、实验器件、软件工具，以及与该课程强相关、可能直接出现在文件名中的常见实验或课程设计题目（例如电子钟、流水灯）。
 6. 不要把“作业、报告、实验、课程”等普通词当成课程关键词。
 7. assignment_types 只放实验报告、课后题、课程设计、课程论文等类型，不要虚构具体任务。
 8. 不要生成教师姓名、学生信息、文件路径、日期或 API Key。
-9. 多门课程可能共享的词只放在确实有代表性的课程中；不确定时返回空数组。
-10. 只输出 JSON，不要输出 Markdown 代码围栏、解释或额外文字。
+9. 常见实验或项目题目只有在能明显区分课程时才放入 keywords；不要为了凑数量生成宽泛或猜测性词语。
+10. 多门课程可能共享的词只放在确实有代表性的课程中；不确定时返回空数组。
+11. 只输出 JSON，不要输出 Markdown 代码围栏、解释或额外文字。
 
 输出 schema：
 {{

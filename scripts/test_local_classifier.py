@@ -209,7 +209,17 @@ class LocalModelTest(unittest.TestCase):
             "docx",
         )
         self.assertEqual(course[0]["label"], "数字电子技术")
+        self.assertGreater(course[0]["confidence"], 0.70)
         self.assertIn("数字电子技术", bundle["assignment_models"])
+
+        control = classifier_trainer.predict_model(
+            bundle["course_model"],
+            "自控根轨迹实验报告",
+            "pdf",
+        )
+        self.assertEqual(control[0]["label"], "自动控制原理")
+        self.assertGreater(control[0]["confidence"], 0.70)
+        self.assertGreater(course[0]["confidence"] - course[1]["confidence"], 0.40)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             classifier_trainer.save_model_bundle(temp_dir, bundle)
@@ -276,6 +286,102 @@ class LocalModelTest(unittest.TestCase):
         )
         self.assertEqual(result["subject_group"], "数字电子技术")
         self.assertEqual(result["source"], "rules")
+
+    def test_conflicting_exact_memory_stays_pending(self):
+        examples = [
+            {
+                "raw_name": "张三_实验1.docx",
+                "normalized_text": "实验1",
+                "subject_group": "数字电子技术",
+                "assignment_id": "d1",
+            },
+            {
+                "raw_name": "李四_实验1.docx",
+                "normalized_text": "实验1",
+                "subject_group": "自动控制原理",
+                "assignment_id": "c1",
+            },
+        ]
+        result = ai_classifier.classify_subject(
+            "王五_实验1.docx",
+            rules=workbench_rules(),
+            examples=examples,
+            students=[{"name": "王五", "student_id": "202400000001"}],
+        )
+        self.assertEqual(result["status"], "subject_conflict")
+        self.assertEqual(result["source"], "feedback_conflict")
+        self.assertEqual(result["candidate_margin"], 0.0)
+        self.assertEqual(
+            {item["subject_group"] for item in result["subject_candidates"]},
+            {"数字电子技术", "自动控制原理"},
+        )
+
+    def test_conflicting_assignment_memory_has_no_exact_winner(self):
+        examples = [
+            {
+                "raw_name": "张三_实验报告.docx",
+                "normalized_text": "实验报告",
+                "subject_group": "数字电子技术",
+                "assignment_id": "d1",
+            },
+            {
+                "raw_name": "李四_实验报告.docx",
+                "normalized_text": "实验报告",
+                "subject_group": "数字电子技术",
+                "assignment_id": "d2",
+            },
+        ]
+        result = ai_classifier.classify_assignment_model(
+            "王五_实验报告.docx",
+            "数字电子技术",
+            examples=examples,
+            students=[{"name": "王五", "student_id": "202400000001"}],
+        )
+        self.assertEqual(result["exact"], [])
+        self.assertEqual(result["exact_conflict"], ["d1", "d2"])
+
+    def test_confirmed_alias_resolves_conflicting_memory(self):
+        examples = [
+            {
+                "raw_name": "张三_自控实验1.docx",
+                "normalized_text": "自控实验1",
+                "subject_group": "数字电子技术",
+            },
+            {
+                "raw_name": "李四_自控实验1.docx",
+                "normalized_text": "自控实验1",
+                "subject_group": "自动控制原理",
+            },
+        ]
+        result = ai_classifier.classify_subject(
+            "王五_自控实验1.docx",
+            rules=workbench_rules(),
+            examples=examples,
+            students=[{"name": "王五", "student_id": "202400000001"}],
+        )
+        self.assertEqual(result["status"], "subject_matched")
+        self.assertEqual(result["subject_group"], "自动控制原理")
+        self.assertEqual(result["source"], "rules")
+
+    def test_fusion_priority_uses_a_shared_signal_denominator(self):
+        rule_scores = {"数字电子技术": 0.80}
+        model_scores = {"数字电子技术": 0.10, "自动控制原理": 0.90}
+        rules_first = ai_classifier.merge_signal_scores(
+            rule_scores,
+            model_scores,
+            model_weight=0.25,
+        )
+        model_first = ai_classifier.merge_signal_scores(
+            rule_scores,
+            model_scores,
+            model_weight=0.75,
+        )
+        self.assertEqual(rules_first[0]["label"], "数字电子技术")
+        self.assertEqual(model_first[0]["label"], "自动控制原理")
+        self.assertLess(
+            next(item for item in rules_first if item["label"] == "自动控制原理")["confidence"],
+            0.30,
+        )
 
 
 class ServerTrainingIntegrationTest(unittest.TestCase):

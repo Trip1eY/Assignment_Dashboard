@@ -3004,6 +3004,20 @@ def classify_assignment_in_subject(filename, subject_group, assignments, cfg=Non
                 "balanced": 0.50,
                 "model_first": 0.75,
             }.get(settings.get("priority"), 0.25)
+            rule_scores = {
+                item["assignment_id"]: item.get("score", 0) / 100
+                for item in candidates
+                if item.get("assignment_id") and item.get("score", 0)
+            }
+            merged_scores = {
+                item["label"]: item
+                for item in ai_classifier.merge_signal_scores(
+                    rule_scores,
+                    model_scores,
+                    similarity_scores,
+                    priority_weight,
+                )
+            }
             for item in candidates:
                 assignment_id = item["assignment_id"]
                 if assignment_id in exact_scores:
@@ -3016,24 +3030,16 @@ def classify_assignment_in_subject(filename, subject_group, assignments, cfg=Non
                         "model_score": model_scores.get(assignment_id, 0.0),
                     })
                     continue
-                rule_score = item.get("score", 0) / 100
-                components = []
-                if rule_score:
-                    components.append((1.0 - priority_weight, rule_score))
-                if assignment_id in model_scores:
-                    components.append((priority_weight, model_scores[assignment_id]))
-                if assignment_id in similarity_scores:
-                    components.append((0.35, similarity_scores[assignment_id]))
-                if components:
-                    total_weight = sum(weight for weight, _score in components)
-                    confidence = sum(weight * score for weight, score in components) / total_weight
+                merged = merged_scores.get(assignment_id)
+                if merged:
+                    confidence = merged["confidence"]
                     item.update({
                         "score": int(round(confidence * 100)),
                         "confidence": round(confidence, 4),
                         "source": "merged",
-                        "rule_score": round(rule_score, 4),
-                        "similarity_score": round(similarity_scores.get(assignment_id, 0.0), 4),
-                        "model_score": round(model_scores.get(assignment_id, 0.0), 4),
+                        "rule_score": merged["rule_score"],
+                        "similarity_score": merged["similarity_score"],
+                        "model_score": merged["model_score"],
                     })
             candidates.sort(key=lambda item: item["score"], reverse=True)
             best = candidates[0] if candidates else None

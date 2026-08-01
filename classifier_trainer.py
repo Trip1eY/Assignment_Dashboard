@@ -20,7 +20,7 @@ from classifier_features import PREPROCESS_VERSION, extract_features, feature_se
 
 MODEL_SCHEMA_VERSION = 1
 EXAMPLES_SCHEMA_VERSION = 2
-FEATURE_VERSION = 2
+FEATURE_VERSION = 3
 COURSE_MIN_PER_LABEL = 5
 ASSIGNMENT_MIN_PER_LABEL = 3
 AUTO_TRAIN_DELTA = 5
@@ -364,12 +364,11 @@ def train_complement_nb(examples, label_field, eligible_labels=None, cancel_even
         for token in vocabulary:
             complement = global_counts[token] - label_feature_counts[label].get(token, 0.0)
             class_weights[token] = -math.log((complement + alpha) / denominator)
-        norm = sum(abs(value) for value in class_weights.values()) or 1.0
         weights[label] = {
-            token: round(value / norm, 10)
+            token: round(value, 10)
             for token, value in class_weights.items()
         }
-        defaults[label] = round(defaults[label] / norm, 10)
+        defaults[label] = round(defaults[label], 10)
 
     return {
         "schema_version": MODEL_SCHEMA_VERSION,

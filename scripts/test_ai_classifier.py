@@ -85,6 +85,14 @@ class AIClassifierTest(unittest.TestCase):
             loaded = ai_classifier.load_rule_pack(path)
             self.assertIn("数字电子技术", loaded["subjects"])
 
+    def test_professional_pack_prompt_requests_distinctive_project_terms(self):
+        prompt = ai_classifier.build_professional_pack_prompt(
+            {"major": "电气工程"},
+            ["数字电子技术"],
+        )
+        self.assertIn("常见实验或课程设计题目", prompt)
+        self.assertIn("明显区分课程", prompt)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
