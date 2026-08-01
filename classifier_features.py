@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 
-PREPROCESS_VERSION = 2
+PREPROCESS_VERSION = 3
 _SEPARATORS = r"\s_\-—+（）()\[\]【】.,，。;；、"
 _NOISE_RE = re.compile(
     r"(?:最终版?|最新版|修订版?|修改版?|完成版|副本|copy|final|"
@@ -89,6 +89,9 @@ def inspect_filename(
         if token in working:
             working = working.replace(token, " ")
             removed["class_names"].append(token)
+    # Removing a concatenated class prefix may expose a roster name at the
+    # beginning of the meaningful text. Normalize that boundary before names.
+    working = re.sub(rf"[{_SEPARATORS}]+", " ", working).strip()
 
     student_rows = []
     for student in students or []:

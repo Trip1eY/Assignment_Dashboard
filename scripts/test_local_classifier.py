@@ -14,6 +14,7 @@ import classifier_trainer
 import installer
 import pack
 import server
+from scripts import evaluate_local_classifier
 
 
 class FilenameContextTest(unittest.TestCase):
@@ -51,6 +52,45 @@ class FilenameContextTest(unittest.TestCase):
         self.assertEqual(result["normalized_text"], "digital lab1")
         self.assertIn("ai smoke class", result["removed"]["class_names"])
         self.assertIn("test student", result["removed"]["student_names"])
+
+    def test_class_prefix_removal_exposes_concatenated_student_name(self):
+        result = classifier_features.inspect_filename(
+            "电国241张三电子技术课程设计报告.docx",
+            students=[{"name": "张三", "student_id": "202400000001"}],
+            class_name="电国241",
+            protected_terms=["电子技术课程设计"],
+        )
+        self.assertEqual(result["normalized_text"], "电子技术课程设计报告")
+        self.assertIn("张三", result["removed"]["student_names"])
+        self.assertEqual(result["preprocess_version"], 3)
+
+    def test_evaluator_scans_names_without_exposing_paths_by_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "数电" / "第一次"
+            target.mkdir(parents=True)
+            (target / "张三_数电实验一.docx").write_bytes(b"body must stay unread")
+            rows, unmatched = evaluate_local_classifier.scan_dataset(
+                root,
+                [{
+                    "path": "数电/第一次",
+                    "subject_group": "数字电子技术",
+                    "assignment_id": "d1",
+                }],
+                10,
+            )
+            self.assertEqual(unmatched, 0)
+            self.assertEqual(len(rows), 1)
+            error = evaluate_local_classifier.private_error(
+                {
+                    **rows[0],
+                    "normalized_text": "数电实验一",
+                },
+                {"subject_group": "", "status": "subject_suggested"},
+                False,
+            )
+            self.assertNotIn("raw_name", error)
+            self.assertNotIn("relative_path", error)
 
 
 class ExampleStoreTest(unittest.TestCase):
@@ -195,6 +235,99 @@ def training_bundle():
 
 
 class LocalModelTest(unittest.TestCase):
+    def test_training_aggregation_caps_duplicate_confirmation_weight(self):
+        rows = [
+            {
+                "raw_name": f"student-{index}-数电实验一.docx",
+                "normalized_text": "数电实验一",
+                "subject_group": "数字电子技术",
+                "assignment_id": "d1",
+                "count": 1,
+                "weight": 1.0,
+            }
+            for index in range(32)
+        ]
+        aggregated = classifier_trainer.aggregate_training_examples(
+            rows,
+            "subject_group",
+        )
+        self.assertEqual(aggregated["pattern_count"], 1)
+        self.assertEqual(aggregated["trainable_pattern_count"], 1)
+        self.assertEqual(aggregated["confirmation_count"], 32)
+        self.assertEqual(aggregated["rows"][0]["weight"], 2.0)
+
+    def test_conflicting_pattern_is_excluded_from_statistical_training(self):
+        rows = [
+            {
+                "raw_name": "one-实验报告.docx",
+                "normalized_text": "实验报告",
+                "subject_group": "数字电子技术",
+            },
+            {
+                "raw_name": "two-实验报告.docx",
+                "normalized_text": "实验报告",
+                "subject_group": "自动控制原理",
+            },
+        ]
+        aggregated = classifier_trainer.aggregate_training_examples(
+            rows,
+            "subject_group",
+        )
+        self.assertEqual(aggregated["trainable_pattern_count"], 0)
+        self.assertEqual(aggregated["conflict_pattern_count"], 1)
+        self.assertEqual(
+            aggregated["conflicts"][0]["labels"],
+            ["数字电子技术", "自动控制原理"],
+        )
+
+    def test_grouped_validation_is_deterministic_and_calibrated(self):
+        rows = []
+        for index in range(10):
+            for duplicate in range(2):
+                rows.append({
+                    "raw_name": f"d-{index}-{duplicate}.docx",
+                    "normalized_text": f"数电触发器实验{index}",
+                    "subject_group": "数字电子技术",
+                })
+                rows.append({
+                    "raw_name": f"c-{index}-{duplicate}.pdf",
+                    "normalized_text": f"自控根轨迹作业{index}",
+                    "subject_group": "自动控制原理",
+                })
+        first = classifier_trainer.build_model_bundle(
+            rows,
+            [],
+            {"数字电子技术", "自动控制原理"},
+        )
+        second = classifier_trainer.build_model_bundle(
+            list(reversed(rows)),
+            [],
+            {"数字电子技术", "自动控制原理"},
+        )
+        validation = first["meta"]["course_validation"]
+        self.assertEqual(first["pattern_count"], 20)
+        self.assertEqual(first["sample_count"], 40)
+        self.assertEqual(validation["split_strategy"], "fingerprint_stratified_hash")
+        self.assertIn(validation["temperature"], classifier_trainer.TEMPERATURE_CANDIDATES)
+        self.assertEqual(
+            validation,
+            second["meta"]["course_validation"],
+        )
+
+    def test_training_signature_stops_changing_after_weight_cap(self):
+        base = {
+            "raw_name": "数电实验一.docx",
+            "normalized_text": "数电实验一",
+            "subject_group": "数字电子技术",
+        }
+        first = classifier_trainer.summarize_training_data(
+            [{**base, "count": 16}], [], {"数字电子技术"}
+        )
+        second = classifier_trainer.summarize_training_data(
+            [{**base, "count": 32}], [], {"数字电子技术"}
+        )
+        self.assertEqual(first["training_signature"], second["training_signature"])
+
     def test_course_and_assignment_models_train_and_reload(self):
         rows = training_examples()
         assignments = training_assignments()
@@ -383,6 +516,40 @@ class LocalModelTest(unittest.TestCase):
             0.30,
         )
 
+    def test_strong_rule_model_disagreement_requires_corroboration(self):
+        self.assertTrue(ai_classifier.signal_conflict_blocked(
+            {"数字电子技术": 0.80},
+            {"自动控制原理": 0.90},
+            {},
+            "自动控制原理",
+        ))
+        self.assertFalse(ai_classifier.signal_conflict_blocked(
+            {"数字电子技术": 0.80},
+            {"自动控制原理": 0.90},
+            {"自动控制原理": 0.80},
+            "自动控制原理",
+        ))
+
+    def test_generic_assignment_name_has_no_specific_course_signal(self):
+        self.assertFalse(ai_classifier.has_specific_filename_signal("实验一"))
+        self.assertFalse(ai_classifier.has_specific_filename_signal("课程设计2"))
+        self.assertTrue(ai_classifier.has_specific_filename_signal("数电第三次实验报告"))
+        self.assertTrue(ai_classifier.has_specific_filename_signal("电子钟课程设计"))
+
+    def test_generic_model_only_prediction_stays_pending(self):
+        result = ai_classifier.classify_subject(
+            "实验一.docx",
+            rules=workbench_rules(),
+            examples=training_examples(),
+            model_bundle=training_bundle(),
+            priority="model_first",
+        )
+        self.assertNotEqual(result["status"], "subject_matched")
+        self.assertEqual(
+            result["auto_adopt_blocker"],
+            "insufficient_filename_information",
+        )
+
 
 class ServerTrainingIntegrationTest(unittest.TestCase):
     def test_feedback_samples_train_in_background(self):
@@ -534,25 +701,113 @@ class ServerTrainingIntegrationTest(unittest.TestCase):
             try:
                 server.AI_EXAMPLES_PATH = root / "ai_examples.json"
                 server.AI_MODELS_DIR = root / "models"
+                examples = training_examples()
+                classifier_trainer.upsert_examples_batch(
+                    server.AI_EXAMPLES_PATH,
+                    examples,
+                )
+                config = {
+                    "assignments": training_assignments(),
+                }
+                rules = workbench_rules()
                 bundle = classifier_trainer.build_model_bundle(
-                    training_examples(),
+                    examples,
                     training_assignments(),
                     {"数字电子技术", "自动控制原理"},
-                    data_version=0,
+                    data_version=1,
                 )
                 classifier_trainer.save_model_bundle(server.AI_MODELS_DIR, bundle)
                 server._ai_model_cache.update({"mtime": None, "bundle": {}})
-                self.assertTrue(server.usable_ai_model_bundle())
+                self.assertTrue(server.usable_ai_model_bundle(config, rules))
                 classifier_trainer.upsert_examples_batch(server.AI_EXAMPLES_PATH, [{
                     "raw_name": "新样本.docx",
                     "normalized_text": "新样本",
                     "subject_group": "数字电子技术",
                 }])
-                self.assertEqual(server.usable_ai_model_bundle(), {})
+                self.assertEqual(server.usable_ai_model_bundle(config, rules), {})
             finally:
                 server.AI_EXAMPLES_PATH, server.AI_MODELS_DIR = original_paths
                 server._ai_model_cache.clear()
                 server._ai_model_cache.update(original_cache)
+
+    def test_model_status_distinguishes_confirmations_patterns_and_conflicts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            original_paths = server.AI_EXAMPLES_PATH, server.AI_MODELS_DIR
+            original_cache = dict(server._ai_training_summary_cache)
+            try:
+                server.AI_EXAMPLES_PATH = root / "ai_examples.json"
+                server.AI_MODELS_DIR = root / "models"
+                rows = [
+                    {
+                        "raw_name": f"d-{index}.docx",
+                        "normalized_text": "实验报告" if index < 2 else f"数电实验{index}",
+                        "subject_group": "数字电子技术",
+                        "count": 3 if index == 0 else 1,
+                    }
+                    for index in range(6)
+                ] + [{
+                    "raw_name": "c-conflict.docx",
+                    "normalized_text": "实验报告",
+                    "subject_group": "自动控制原理",
+                }]
+                classifier_trainer.upsert_examples_batch(server.AI_EXAMPLES_PATH, rows)
+                config = {"assignments": training_assignments()}
+                status = server.ai_model_status(config, workbench_rules())
+                digital = next(
+                    item for item in status["courses"]
+                    if item["subject_group"] == "数字电子技术"
+                )
+                self.assertGreater(status["confirmation_count"], status["pattern_count"])
+                self.assertEqual(status["conflict_pattern_count"], 1)
+                self.assertEqual(digital["conflict_pattern_count"], 1)
+                self.assertEqual(digital["trainable_pattern_count"], 4)
+            finally:
+                server.AI_EXAMPLES_PATH, server.AI_MODELS_DIR = original_paths
+                server._ai_training_summary_cache.clear()
+                server._ai_training_summary_cache.update(original_cache)
+
+    def test_capped_duplicate_confirmation_does_not_stale_model(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            original_paths = server.AI_EXAMPLES_PATH, server.AI_MODELS_DIR
+            original_model_cache = dict(server._ai_model_cache)
+            original_summary_cache = dict(server._ai_training_summary_cache)
+            try:
+                server.AI_EXAMPLES_PATH = root / "ai_examples.json"
+                server.AI_MODELS_DIR = root / "models"
+                rows = training_examples()
+                rows[0]["count"] = 16
+                classifier_trainer.replace_examples(
+                    server.AI_EXAMPLES_PATH,
+                    rows,
+                )
+                payload = classifier_trainer.load_examples(server.AI_EXAMPLES_PATH)
+                bundle = classifier_trainer.build_model_bundle(
+                    rows,
+                    training_assignments(),
+                    {"数字电子技术", "自动控制原理"},
+                    data_version=payload["data_version"],
+                )
+                classifier_trainer.save_model_bundle(server.AI_MODELS_DIR, bundle)
+                server._ai_model_cache.update({"mtime": None, "bundle": {}})
+                config = {"assignments": training_assignments()}
+                rules = workbench_rules()
+                self.assertTrue(server.usable_ai_model_bundle(config, rules))
+
+                rows[0]["count"] = 32
+                classifier_trainer.replace_examples(
+                    server.AI_EXAMPLES_PATH,
+                    rows,
+                )
+                self.assertTrue(server.usable_ai_model_bundle(config, rules))
+                self.assertFalse(server.ai_model_status(config, rules)["dataset_stale"])
+            finally:
+                server.AI_EXAMPLES_PATH, server.AI_MODELS_DIR = original_paths
+                server._ai_model_cache.clear()
+                server._ai_model_cache.update(original_model_cache)
+                server._ai_training_summary_cache.clear()
+                server._ai_training_summary_cache.update(original_summary_cache)
 
 
 class SampleWorkbenchServiceTest(unittest.TestCase):

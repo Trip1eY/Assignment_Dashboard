@@ -98,6 +98,7 @@ _ai_training_cancel = threading.Event()
 _ai_training_thread = None
 _ai_auto_train_timer = None
 _ai_model_cache = {"mtime": None, "bundle": {}}
+_ai_training_summary_cache = {"key": None, "summary": {}}
 _ai_training_state = {
     "state": "idle",
     "phase": "",
@@ -989,11 +990,13 @@ def load_ai_model_bundle(force=False):
         return _ai_model_cache["bundle"]
 
 
-def usable_ai_model_bundle():
+def usable_ai_model_bundle(cfg=None, rules=None, examples_payload=None):
     """Return only a model trained from the current sample dataset."""
     bundle = load_ai_model_bundle()
-    payload = load_ai_examples_payload()
-    if int(bundle.get("data_version", 0) or 0) != int(payload.get("data_version", 0) or 0):
+    if not bundle:
+        return {}
+    summary = ai_training_summary(cfg, rules, examples_payload)
+    if bundle.get("training_signature") != summary.get("training_signature"):
         return {}
     return bundle
 
@@ -1012,6 +1015,45 @@ def _active_ai_subjects(cfg=None, rules=None):
     return subjects
 
 
+def ai_training_summary(cfg=None, rules=None, examples_payload=None):
+    cfg = cfg or load_config_raw()
+    rules = rules or load_ai_rules()
+    examples_payload = examples_payload or load_ai_examples_payload()
+    active_subjects = _active_ai_subjects(cfg, rules)
+    assignments = list(cfg.get("assignments", []))
+    context_payload = {
+        "active_subjects": sorted(active_subjects),
+        "assignments": sorted(
+            (
+                str(item.get("id") or ""),
+                str(item.get("subject_group") or item.get("subject") or ""),
+                bool(item.get("active", True)),
+            )
+            for item in assignments
+            if item.get("id")
+        ),
+    }
+    context_key = hashlib.sha1(
+        json.dumps(context_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    cache_key = (
+        str(AI_EXAMPLES_PATH.resolve()),
+        int(examples_payload.get("data_version", 0) or 0),
+        context_key,
+    )
+    with _ai_training_lock:
+        if _ai_training_summary_cache["key"] == cache_key:
+            return _ai_training_summary_cache["summary"]
+    summary = classifier_trainer.summarize_training_data(
+        examples_payload.get("items", []),
+        assignments,
+        active_subjects,
+    )
+    with _ai_training_lock:
+        _ai_training_summary_cache.update({"key": cache_key, "summary": summary})
+    return summary
+
+
 def _set_ai_training_state(**updates):
     with _ai_training_lock:
         _ai_training_state.update(updates)
@@ -1024,6 +1066,12 @@ def ai_model_status(cfg=None, rules=None):
             "phase": "",
             "progress": 0,
             "sample_count": 0,
+            "confirmation_count": 0,
+            "pattern_count": 0,
+            "trainable_pattern_count": 0,
+            "conflict_pattern_count": 0,
+            "trained_pattern_count": 0,
+            "pending_pattern_count": 0,
             "trained_sample_count": 0,
             "pending_sample_count": 0,
             "trainable": False,
@@ -1037,24 +1085,29 @@ def ai_model_status(cfg=None, rules=None):
     ensure_ai_examples_migrated(cfg)
     examples_payload = load_ai_examples_payload()
     examples = examples_payload.get("items", [])
+    summary = ai_training_summary(cfg, rules, examples_payload)
+    course_summary = summary["course"]
     bundle = load_ai_model_bundle()
     data_version = int(examples_payload.get("data_version", 0) or 0)
     trained_data_version = int(bundle.get("data_version", 0) or 0)
-    dataset_stale = bool(bundle) and data_version != trained_data_version
-    trained_counts = ((bundle.get("meta") or {}).get("course_sample_counts") or {})
-    current_counts = {}
-    assignment_counts = {}
+    dataset_stale = bool(bundle) and (
+        bundle.get("training_signature") != summary.get("training_signature")
+    )
+    trained_counts = ((bundle.get("meta") or {}).get("course_pattern_counts") or {})
+    current_counts = course_summary["label_pattern_counts"]
+    current_confirmations = {}
     for item in examples:
         subject = str(item.get("subject_group") or "").strip()
         if not subject:
             continue
-        current_counts[subject] = current_counts.get(subject, 0) + 1
-        assignment_id = str(item.get("assignment_id") or "").strip()
-        if assignment_id:
-            assignment_counts.setdefault(subject, {})
-            assignment_counts[subject][assignment_id] = (
-                assignment_counts[subject].get(assignment_id, 0) + 1
-            )
+        current_confirmations[subject] = (
+            current_confirmations.get(subject, 0)
+            + classifier_trainer.example_confirmation_count(item)
+        )
+    subject_conflicts = {}
+    for conflict in course_summary["conflicts"]:
+        for subject in conflict["labels"]:
+            subject_conflicts[subject] = subject_conflicts.get(subject, 0) + 1
     active_subjects = sorted(_active_ai_subjects(cfg, rules))
     trainable_subjects = {
         subject for subject in active_subjects
@@ -1066,7 +1119,10 @@ def ai_model_status(cfg=None, rules=None):
         training = dict(_ai_training_state)
     courses = []
     for subject in active_subjects:
-        count = current_counts.get(subject, 0)
+        count = int(current_counts.get(subject, 0) or 0)
+        confirmation_count = int(current_confirmations.get(subject, 0) or 0)
+        conflict_count = int(subject_conflicts.get(subject, 0) or 0)
+        pattern_count = count + conflict_count
         trained_count = int(trained_counts.get(subject, 0) or 0)
         if training["state"] == "training" and subject in trainable_subjects:
             state = "training"
@@ -1082,7 +1138,14 @@ def ai_model_status(cfg=None, rules=None):
             state = "collecting"
         else:
             state = "rules_only"
-        subject_assignment_counts = assignment_counts.get(subject, {})
+        assignment_data = summary["assignment"].get(subject, {
+            "label_pattern_counts": {},
+            "label_confirmation_counts": {},
+            "pattern_count": 0,
+            "trainable_pattern_count": 0,
+            "conflict_pattern_count": 0,
+        })
+        subject_assignment_counts = assignment_data["label_pattern_counts"]
         eligible_assignments = [
             assignment_id
             for assignment_id, sample_count in subject_assignment_counts.items()
@@ -1091,9 +1154,15 @@ def ai_model_status(cfg=None, rules=None):
         courses.append({
             "subject_group": subject,
             "state": state,
-            "confirmed_samples": count,
+            "confirmed_samples": confirmation_count,
             "trained_samples": trained_count,
-            "pending_samples": max(0, count - trained_count),
+            "pending_samples": max(0, confirmation_count - trained_count),
+            "confirmation_count": confirmation_count,
+            "pattern_count": pattern_count,
+            "trainable_pattern_count": count,
+            "conflict_pattern_count": conflict_count,
+            "trained_pattern_count": trained_count,
+            "pending_pattern_count": max(0, count - trained_count),
             "assignment_state": (
                 "stale"
                 if dataset_stale and subject in assignment_models
@@ -1106,6 +1175,12 @@ def ai_model_status(cfg=None, rules=None):
                 else "rules_only"
             ),
             "assignment_labels": len(subject_assignment_counts),
+            "assignment_confirmation_count": sum(
+                assignment_data["label_confirmation_counts"].values()
+            ),
+            "assignment_pattern_count": assignment_data["pattern_count"],
+            "assignment_trainable_pattern_count": assignment_data["trainable_pattern_count"],
+            "assignment_conflict_pattern_count": assignment_data["conflict_pattern_count"],
             "trained_assignment_labels": len(
                 (assignment_models.get(subject) or {}).get("labels") or []
             ),
@@ -1116,7 +1191,7 @@ def ai_model_status(cfg=None, rules=None):
                 )
             ),
         })
-    total = len(examples)
+    total = summary["confirmation_count"]
     trained_total = int(bundle.get("sample_count", 0) or 0)
     overall_state = training["state"]
     if overall_state == "idle":
@@ -1137,6 +1212,17 @@ def ai_model_status(cfg=None, rules=None):
         "finished_at": training["finished_at"],
         "error": training["error"],
         "sample_count": total,
+        "confirmation_count": total,
+        "sample_record_count": summary["sample_record_count"],
+        "pattern_count": course_summary["pattern_count"],
+        "trainable_pattern_count": course_summary["trainable_pattern_count"],
+        "conflict_pattern_count": course_summary["conflict_pattern_count"],
+        "trained_pattern_count": int(bundle.get("trainable_pattern_count", 0) or 0),
+        "pending_pattern_count": max(
+            0,
+            course_summary["trainable_pattern_count"]
+            - int(bundle.get("trainable_pattern_count", 0) or 0),
+        ) if not dataset_stale else max(1, course_summary["trainable_pattern_count"]),
         "trained_sample_count": trained_total,
         "pending_sample_count": pending_sample_count,
         "trainable": len(trainable_subjects) >= 2,
@@ -1165,18 +1251,15 @@ def start_ai_training():
         ensure_ai_examples_migrated(cfg)
         examples_payload = load_ai_examples_payload()
         examples = examples_payload.get("items", [])
-        counts = {}
-        for item in examples:
-            subject = str(item.get("subject_group") or "").strip()
-            if subject:
-                counts[subject] = counts.get(subject, 0) + 1
+        summary = ai_training_summary(cfg, rules, examples_payload)
+        counts = summary["course"]["label_pattern_counts"]
         eligible = [
             subject for subject, count in counts.items()
             if count >= classifier_trainer.COURSE_MIN_PER_LABEL
             and subject in _active_ai_subjects(cfg, rules)
         ]
         if len(eligible) < 2:
-            return False, "至少需要两个课程各 5 条确认样本"
+            return False, "至少需要两个课程各 5 种独立文件名模式"
         assignments = list(cfg.get("assignments", []))
         active_subjects = _active_ai_subjects(cfg, rules)
         _ai_training_state.update({
@@ -1257,11 +1340,7 @@ def schedule_ai_auto_train(cfg=None):
     status = ai_model_status(cfg)
     if not status.get("trainable"):
         return
-    if (
-        status.get("trained_at")
-        and not status.get("dataset_stale")
-        and status.get("pending_sample_count", 0) < classifier_trainer.AUTO_TRAIN_DELTA
-    ):
+    if status.get("trained_at") and not status.get("dataset_stale"):
         return
     with _ai_training_lock:
         if _ai_auto_train_timer:
@@ -2976,6 +3055,8 @@ def classify_assignment_in_subject(filename, subject_group, assignments, cfg=Non
     best = candidates[0] if candidates else None
     runner_score = candidates[1]["score"] if len(candidates) > 1 else -999
     settings = ai_settings(cfg) if HAS_AI_CLASSIFIER else {"mode": "rules"}
+    signal_conflict = False
+    exact_conflict = False
     if HAS_AI_CLASSIFIER and settings.get("mode") == "local_model":
         try:
             cfg = cfg or load_config_raw()
@@ -2993,6 +3074,7 @@ def classify_assignment_in_subject(filename, subject_group, assignments, cfg=Non
             exact_scores = {
                 item["label"]: item["confidence"] for item in learned.get("exact", [])
             }
+            exact_conflict = bool(learned.get("exact_conflict"))
             similarity_scores = {
                 item["label"]: item["confidence"] for item in learned.get("similarity", [])
             }
@@ -3044,6 +3126,12 @@ def classify_assignment_in_subject(filename, subject_group, assignments, cfg=Non
             candidates.sort(key=lambda item: item["score"], reverse=True)
             best = candidates[0] if candidates else None
             runner_score = candidates[1]["score"] if len(candidates) > 1 else -999
+            signal_conflict = bool(best) and ai_classifier.signal_conflict_blocked(
+                rule_scores,
+                model_scores,
+                similarity_scores,
+                best["assignment_id"],
+            )
         except Exception as exc:
             print(f"[WARN] 科目内本地模型失败，保留规则结果：{exc}")
     threshold = (
@@ -3051,13 +3139,34 @@ def classify_assignment_in_subject(filename, subject_group, assignments, cfg=Non
         if settings.get("mode") == "local_model"
         else 75
     )
-    if best and best["score"] >= threshold and best["score"] - runner_score >= 15:
+    margin = best["score"] - runner_score if best else 0
+    blocker = ""
+    if exact_conflict or signal_conflict:
+        blocker = "signal_conflict"
+    elif not best:
+        blocker = "no_candidate"
+    elif best["score"] < threshold:
+        blocker = "score_below_threshold"
+    elif margin < 15:
+        blocker = "margin_below_minimum"
+    if best and not blocker:
         return {"status": "matched", "assignment_id": best["assignment_id"],
                 "score": best["score"], "candidates": candidates[:3],
+                "candidate_margin": margin / 100,
+                "auto_adopted": True, "auto_adopt_blocker": "",
                 "evidence": [f"科目内作业匹配：{best['name'] or best['experiment']}" ]}
-    reason = "未发现明确作业信息" if not best or best["score"] < 50 else "作业候选分数接近，等待确认"
+    if blocker == "signal_conflict":
+        reason = "规则与本地模型结论冲突，等待确认"
+    elif blocker == "score_below_threshold":
+        reason = "作业候选未达到自动采用阈值"
+    elif blocker == "margin_below_minimum":
+        reason = "作业候选分数接近，等待确认"
+    else:
+        reason = "未发现明确作业信息"
     return {"status": "assignment_pending", "assignment_id": "", "score": best["score"] if best else 0,
-            "candidates": candidates[:3], "evidence": [reason]}
+            "candidates": candidates[:3], "candidate_margin": margin / 100 if best else 0.0,
+            "auto_adopted": False, "auto_adopt_blocker": blocker,
+            "evidence": [reason]}
 
 def _can_archive_record(record):
     return record.get("status") in ("matched", "manual_matched") and bool(record.get("assignment_id"))
@@ -5479,7 +5588,15 @@ class APIHandler(SimpleHTTPRequestHandler):
                 "assignment_id": assignment_result.get("assignment_id", ""),
                 "assignment_candidates": assignment_result.get("candidates", []),
                 "assignment_score": assignment_result.get("score", 0),
+                "assignment_candidate_margin": assignment_result.get("candidate_margin", 0.0),
+                "assignment_auto_adopt_blocker": assignment_result.get("auto_adopt_blocker", ""),
                 "stage": assignment_result.get("status") if result.get("status") == "subject_matched" else result.get("stage", "pending_archive"),
+                "auto_adopt_blocker": (
+                    assignment_result.get("auto_adopt_blocker", "")
+                    if result.get("status") == "subject_matched"
+                    and assignment_result.get("status") != "matched"
+                    else result.get("auto_adopt_blocker", "")
+                ),
                 "evidence": list(result.get("evidence", [])) + list(assignment_result.get("evidence", [])),
             }
             self._json({"ok": True, "result": payload})

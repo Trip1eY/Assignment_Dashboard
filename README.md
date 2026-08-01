@@ -64,6 +64,17 @@ Assignment_Dashboard 主要用于监控微信接收的作业文件，同时允�
 
 训练样本不是必填项；零样本时系统保持原有规则分类行为。本地学习只处理文件名，不读取或上传文件正文。未知课程、标签冲突和低置信度结果不会直接自动归档。
 
+开发者可以使用 `scripts/evaluate_local_classifier.py` 对外部文件名数据集进行可复现评测。评测器只扫描文件名、扩展名和相对目录，目录标签通过独立 JSON 映射提供，默认报告不包含原始文件名：
+
+```batch
+python scripts/evaluate_local_classifier.py ^
+  --root "D:\external-dataset" ^
+  --mapping "D:\private\classifier-mapping.json" ^
+  --output "D:\private\classifier-report.json"
+```
+
+映射文件的 `labels` 使用最长目录前缀匹配，至少需要提供 `path` 和 `subject_group`，需要评测具体作业时再提供 `assignment_id`。课程规则可以放在 `rules`，也可以通过 `rules_file` 引用外部专业包。学生名单、映射文件和评测报告应保留在仓库外，不要提交真实姓名、学号或作业文件名。
+
 ## 下载与安装
 
 推荐从项目的 [Releases](https://github.com/Trip1eY/Assignment_Dashboard/releases) 页面下载最新安装程序。

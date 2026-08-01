@@ -39,6 +39,21 @@ TYPE_WORDS = {
 }
 
 
+def has_specific_filename_signal(text):
+    """Return false for labels such as only '实验一' or '作业2'."""
+    residue = _clean_text(text, 500).casefold()
+    for token in sorted(GENERIC_WORDS | TYPE_WORDS, key=len, reverse=True):
+        residue = residue.replace(token.casefold(), " ")
+    residue = re.sub(
+        r"(?:第\s*)?[一二三四五六七八九十百零〇两\d]{1,5}(?:次|章|节|周)?",
+        " ",
+        residue,
+    )
+    residue = re.sub(r"\b(?:lab|ex|exp|hw|homework)\s*\d*\b", " ", residue, flags=re.I)
+    residue = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", residue)
+    return len(residue) >= 2
+
+
 class RulePackError(ValueError):
     """Raised when an imported rule pack is invalid."""
 
@@ -396,8 +411,44 @@ def merge_signal_scores(rule_scores, model_scores, similarity_scores=None,
     return sorted(merged, key=lambda item: (-item["confidence"], str(item["label"])))
 
 
+def signal_conflict_blocked(rule_scores, model_scores, similarity_scores,
+                            winner_label, strong_threshold=0.65,
+                            similarity_override=0.75):
+    """Keep strong rule/model disagreements pending unless memory corroborates."""
+    if not winner_label or not rule_scores or not model_scores:
+        return False
+    rule_top = max(rule_scores.items(), key=lambda item: (item[1], item[0]))
+    model_top = max(model_scores.items(), key=lambda item: (item[1], item[0]))
+    if (
+        rule_top[0] == model_top[0]
+        or float(rule_top[1]) < strong_threshold
+        or float(model_top[1]) < strong_threshold
+    ):
+        return False
+    similarity_scores = similarity_scores or {}
+    winner_similarity = float(similarity_scores.get(winner_label, 0.0))
+    opposing_similarity = max(
+        (
+            float(value) for label, value in similarity_scores.items()
+            if label != winner_label
+        ),
+        default=0.0,
+    )
+    return not (
+        winner_similarity >= similarity_override
+        and winner_similarity - opposing_similarity >= 0.15
+    )
+
+
 def _with_diagnostics(result, parsed, rule_score=0.0, similarity_score=0.0,
-                      model_score=0.0, margin=0.0):
+                      model_score=0.0, margin=0.0, blocker=""):
+    if not blocker and result.get("status") != "subject_matched":
+        if result.get("status") == "subject_conflict":
+            blocker = "signal_conflict"
+        elif result.get("status") == "subject_suggested":
+            blocker = "score_below_threshold"
+        else:
+            blocker = "no_candidate"
     return {
         **result,
         "normalized_text": parsed.get("normalized_text", ""),
@@ -406,6 +457,10 @@ def _with_diagnostics(result, parsed, rule_score=0.0, similarity_score=0.0,
         "similarity_score": round(float(similarity_score or 0.0), 4),
         "model_score": round(float(model_score or 0.0), 4),
         "candidate_margin": round(float(margin or 0.0), 4),
+        "auto_adopted": result.get("status") == "subject_matched",
+        "auto_adopt_blocker": str(
+            blocker or result.get("auto_adopt_blocker") or ""
+        ),
     }
 
 
@@ -549,7 +604,31 @@ def classify_subject(filename, assignments=None, rules=None, feedback=None,
     best = scored[0] if scored else None
     runner = scored[1]["confidence"] if len(scored) > 1 else 0.0
     margin = best["confidence"] - runner if best else 0.0
-    matched = bool(best and best["confidence"] >= float(sensitivity) and margin >= 0.15)
+    signal_conflict = bool(best) and signal_conflict_blocked(
+        rule_candidates,
+        model_scores,
+        similarity_scores,
+        best["subject_group"],
+    )
+    low_information = bool(best) and not rule_candidates and not has_specific_filename_signal(clean)
+    matched = bool(
+        best
+        and best["confidence"] >= float(sensitivity)
+        and margin >= 0.15
+        and not signal_conflict
+        and not low_information
+    )
+    blocker = ""
+    if not best:
+        blocker = "training_coverage_insufficient" if model_bundle else "no_candidate"
+    elif signal_conflict:
+        blocker = "signal_conflict"
+    elif low_information:
+        blocker = "insufficient_filename_information"
+    elif best["confidence"] < float(sensitivity):
+        blocker = "score_below_threshold"
+    elif margin < 0.15:
+        blocker = "margin_below_minimum"
     evidence = list(rule_result.get("evidence", []))
     if best:
         if best["similarity_score"]:
@@ -558,6 +637,10 @@ def classify_subject(filename, assignments=None, rules=None, feedback=None,
             evidence.append(f"本地模型评分：{best['model_score']:.2f}")
         if len(scored) > 1:
             evidence.append(f"候选分差：{margin:.2f}")
+        if signal_conflict:
+            evidence.append("规则与本地模型结论冲突，等待人工确认")
+        if low_information:
+            evidence.append("文件名仅包含通用作业信息，无法可靠判断课程")
     result = {
         "status": "subject_matched" if matched else (
             "subject_suggested" if best else "unknown_subject"
@@ -577,6 +660,7 @@ def classify_subject(filename, assignments=None, rules=None, feedback=None,
         similarity_score=best["similarity_score"] if best else 0.0,
         model_score=best["model_score"] if best else 0.0,
         margin=margin,
+        blocker=blocker,
     )
 
 

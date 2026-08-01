@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -18,12 +19,14 @@ from pathlib import Path
 from classifier_features import PREPROCESS_VERSION, extract_features, feature_set, text_similarity
 
 
-MODEL_SCHEMA_VERSION = 1
+MODEL_SCHEMA_VERSION = 2
 EXAMPLES_SCHEMA_VERSION = 2
 FEATURE_VERSION = 3
 COURSE_MIN_PER_LABEL = 5
 ASSIGNMENT_MIN_PER_LABEL = 3
 AUTO_TRAIN_DELTA = 5
+DEFAULT_TEMPERATURE = 0.18
+TEMPERATURE_CANDIDATES = (0.12, 0.18, 0.25, 0.35, 0.50, 0.75, 1.0)
 _storage_lock = threading.RLock()
 
 
@@ -113,6 +116,112 @@ def _sample_key(item):
         str(item.get("subject_group") or "").casefold(),
         str(item.get("assignment_id") or "").casefold(),
     )
+
+
+def example_fingerprint(item):
+    """Return a privacy-safe identity for one normalized filename pattern."""
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        str((item or {}).get("normalized_text") or "").strip().casefold(),
+    )
+    extension = Path(str((item or {}).get("raw_name") or "")).suffix.lower().lstrip(".")
+    if not normalized:
+        return ""
+    return hashlib.sha1(f"{normalized}\0{extension}".encode("utf-8")).hexdigest()
+
+
+def example_confirmation_count(item):
+    try:
+        return max(1, int((item or {}).get("count", 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def example_weight(item):
+    try:
+        return max(0.1, min(2.0, float((item or {}).get("weight", 1.0))))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def aggregate_training_examples(examples, label_field, subject_group="", eligible_labels=None,
+                                feature_cache=None):
+    """Collapse repeated confirmations and exclude contradictory patterns."""
+    eligible = set(eligible_labels or [])
+    by_fingerprint = defaultdict(list)
+    confirmation_count = 0
+    for source in examples or []:
+        if subject_group and source.get("subject_group") != subject_group:
+            continue
+        label = str(source.get(label_field) or "").strip()
+        if not label or (eligible and label not in eligible):
+            continue
+        fingerprint = example_fingerprint(source)
+        if not fingerprint:
+            continue
+        item = dict(source)
+        item["_fingerprint"] = fingerprint
+        item["_label"] = label
+        item["count"] = example_confirmation_count(item)
+        confirmation_count += item["count"]
+        by_fingerprint[fingerprint].append(item)
+
+    rows = []
+    conflicts = []
+    label_pattern_counts = Counter()
+    label_confirmation_counts = Counter()
+    for fingerprint, items in sorted(by_fingerprint.items()):
+        labels = sorted({item["_label"] for item in items})
+        total_confirmations = sum(item["count"] for item in items)
+        if len(labels) != 1:
+            conflicts.append({
+                "fingerprint": fingerprint,
+                "labels": labels,
+                "confirmation_count": total_confirmations,
+            })
+            continue
+        label = labels[0]
+        representative = max(
+            items,
+            key=lambda item: (
+                str(item.get("confirmed_at") or ""),
+                str(item.get("id") or ""),
+            ),
+        )
+        max_weight = max(example_weight(item) for item in items)
+        effective_weight = min(
+            2.0,
+            max_weight * (1.0 + 0.25 * math.log2(max(1, total_confirmations))),
+        )
+        row = dict(representative)
+        row["count"] = total_confirmations
+        row["weight"] = round(effective_weight, 6)
+        row["_fingerprint"] = fingerprint
+        if feature_cache is not None and fingerprint in feature_cache:
+            row["_features"] = feature_cache[fingerprint]
+        else:
+            row["_features"] = extract_features(
+                row.get("normalized_text", ""),
+                Path(str(row.get("raw_name") or "")).suffix.lstrip("."),
+            )
+            if feature_cache is not None:
+                feature_cache[fingerprint] = row["_features"]
+        row.pop("_label", None)
+        rows.append(row)
+        label_pattern_counts[label] += 1
+        label_confirmation_counts[label] += total_confirmations
+
+    return {
+        "rows": rows,
+        "pattern_count": len(by_fingerprint),
+        "trainable_pattern_count": len(rows),
+        "conflict_pattern_count": len(conflicts),
+        "confirmation_count": confirmation_count,
+        "label_pattern_counts": dict(label_pattern_counts),
+        "label_confirmation_counts": dict(label_confirmation_counts),
+        "conflicts": conflicts,
+    }
 
 
 def _normalize_example(example):
@@ -312,38 +421,41 @@ def similarity_predictions(text, examples, label_field="subject_group", subject_
     return sorted(best_by_label.values(), key=lambda item: (-item["confidence"], item["label"]))[:limit]
 
 
-def _softmax(values):
+def _softmax(values, temperature=DEFAULT_TEMPERATURE):
     if not values:
         return {}
+    temperature = max(0.05, min(2.0, float(temperature or DEFAULT_TEMPERATURE)))
     peak = max(values.values())
-    exps = {key: math.exp(max(-60.0, min(60.0, (value - peak) / 0.18))) for key, value in values.items()}
+    exps = {
+        key: math.exp(max(-60.0, min(60.0, (value - peak) / temperature)))
+        for key, value in values.items()
+    }
     total = sum(exps.values()) or 1.0
     return {key: value / total for key, value in exps.items()}
 
 
-def train_complement_nb(examples, label_field, eligible_labels=None, cancel_event=None):
+def _train_complement_nb_rows(rows, label_field, eligible_labels=None, cancel_event=None):
     eligible = set(eligible_labels or [])
-    rows = []
     label_docs = Counter()
     label_feature_counts = defaultdict(Counter)
-    label_totals = Counter()
     global_counts = Counter()
-    for item in examples or []:
+    for item in rows or []:
         if cancel_event and cancel_event.is_set():
             raise InterruptedError("训练已取消")
         label = str(item.get(label_field) or "").strip()
         if not label or (eligible and label not in eligible):
             continue
-        features = extract_features(item.get("normalized_text", ""), Path(str(item.get("raw_name") or "")).suffix.lstrip("."))
+        features = item.get("_features") or extract_features(
+            item.get("normalized_text", ""),
+            Path(str(item.get("raw_name") or "")).suffix.lstrip("."),
+        )
         if not features:
             continue
-        weight = max(0.1, min(2.0, float(item.get("weight", 1.0))))
-        rows.append((label, features, weight))
+        weight = example_weight(item)
         label_docs[label] += weight
         for token, count in features.items():
             value = count * weight
             label_feature_counts[label][token] += value
-            label_totals[label] += value
             global_counts[token] += value
     labels = sorted(label_docs)
     if len(labels) < 2:
@@ -379,16 +491,30 @@ def train_complement_nb(examples, label_field, eligible_labels=None, cancel_even
         "defaults": defaults,
         "priors": {label: label_docs[label] / total_docs for label in labels},
         "document_counts": {label: round(label_docs[label], 3) for label in labels},
+        "temperature": DEFAULT_TEMPERATURE,
         "trained_at": _now(),
     }
 
 
-def predict_model(model, text, extension=""):
+def train_complement_nb(examples, label_field, eligible_labels=None, cancel_event=None):
+    aggregated = aggregate_training_examples(
+        examples,
+        label_field,
+        eligible_labels=eligible_labels,
+    )
+    return _train_complement_nb_rows(
+        aggregated["rows"],
+        label_field,
+        eligible_labels,
+        cancel_event,
+    )
+
+
+def _raw_model_scores_from_features(model, features):
     if not isinstance(model, dict) or not model.get("labels"):
-        return []
-    features = extract_features(text, extension)
+        return {}
     if not features:
-        return []
+        return {}
     total_features = sum(features.values()) or 1
     raw_scores = {}
     for label in model.get("labels", []):
@@ -400,109 +526,255 @@ def predict_model(model, text, extension=""):
         score /= total_features
         score += 0.02 * math.log(max(1e-9, float(model.get("priors", {}).get(label, 1e-9))))
         raw_scores[label] = score
-    probabilities = _softmax(raw_scores)
+    return raw_scores
+
+
+def _raw_model_scores(model, text, extension=""):
+    return _raw_model_scores_from_features(
+        model,
+        extract_features(text, extension),
+    )
+
+
+def predict_model(model, text, extension=""):
+    raw_scores = _raw_model_scores(model, text, extension)
+    if not raw_scores:
+        return []
+    probabilities = _softmax(
+        raw_scores,
+        model.get("temperature", DEFAULT_TEMPERATURE),
+    )
     return [
         {"label": label, "confidence": round(probabilities[label], 4)}
         for label in sorted(probabilities, key=lambda key: (-probabilities[key], key))
     ]
 
 
-def _label_counts(examples, label_field, subject_group=""):
-    counts = Counter()
-    for item in examples or []:
-        if subject_group and item.get("subject_group") != subject_group:
-            continue
-        label = str(item.get(label_field) or "").strip()
-        if label:
-            counts[label] += 1
-    return counts
-
-
-def _validation_result(examples, label_field, eligible_labels, subject_group="", cancel_event=None):
+def _validation_result(examples, label_field, eligible_labels, cancel_event=None):
     grouped = defaultdict(list)
     for item in examples:
-        if subject_group and item.get("subject_group") != subject_group:
-            continue
         label = str(item.get(label_field) or "").strip()
         if label in eligible_labels:
             grouped[label].append(item)
-    if not grouped or any(len(items) < 8 for items in grouped.values()):
-        return {"status": "insufficient", "samples": 0}
+    validation_labels = {
+        label for label, items in grouped.items() if len(items) >= 8
+    }
+    if len(validation_labels) < 2:
+        return {
+            "status": "insufficient",
+            "samples": 0,
+            "eligible_labels": len(grouped),
+            "validated_labels": len(validation_labels),
+        }
+    grouped = {
+        label: items for label, items in grouped.items()
+        if label in validation_labels
+    }
 
     train_rows = []
     test_rows = []
     for label, items in grouped.items():
         ordered = sorted(
             items,
-            key=lambda item: hashlib.sha1(
-                str(item.get("normalized_text") or "").encode("utf-8")
-            ).hexdigest(),
+            key=lambda item: item.get("_fingerprint") or example_fingerprint(item),
         )
         for index, item in enumerate(ordered):
             (test_rows if index % 5 == 0 else train_rows).append(item)
-    model = train_complement_nb(train_rows, label_field, eligible_labels, cancel_event)
+    model = _train_complement_nb_rows(
+        train_rows,
+        label_field,
+        eligible_labels,
+        cancel_event,
+    )
     if not model or not test_rows:
         return {"status": "insufficient", "samples": 0}
+
+    scored_rows = []
+    for item in test_rows:
+        raw_scores = _raw_model_scores_from_features(
+            model,
+            item.get("_features") or extract_features(
+                item.get("normalized_text", ""),
+                Path(str(item.get("raw_name") or "")).suffix.lstrip("."),
+            ),
+        )
+        if raw_scores:
+            scored_rows.append((str(item.get(label_field) or ""), raw_scores))
+    if not scored_rows:
+        return {"status": "insufficient", "samples": 0}
+
+    def negative_log_likelihood(temperature):
+        total = 0.0
+        for expected, raw_scores in scored_rows:
+            probabilities = _softmax(raw_scores, temperature)
+            total -= math.log(max(1e-12, probabilities.get(expected, 0.0)))
+        return total / len(scored_rows)
+
+    temperature = min(
+        TEMPERATURE_CANDIDATES,
+        key=lambda value: (negative_log_likelihood(value), value),
+    )
+    model["temperature"] = temperature
     correct = 0
     for item in test_rows:
-        prediction = predict_model(model, item.get("normalized_text", ""), Path(str(item.get("raw_name") or "")).suffix.lstrip("."))
-        if prediction and prediction[0]["label"] == item.get(label_field):
+        raw_scores = _raw_model_scores_from_features(
+            model,
+            item.get("_features") or extract_features(
+                item.get("normalized_text", ""),
+                Path(str(item.get("raw_name") or "")).suffix.lstrip("."),
+            ),
+        )
+        prediction = _softmax(raw_scores, model.get("temperature", DEFAULT_TEMPERATURE))
+        predicted_label = max(prediction, key=prediction.get) if prediction else ""
+        if predicted_label == item.get(label_field):
             correct += 1
     return {
         "status": "ready",
         "samples": len(test_rows),
+        "patterns": len(test_rows),
         "accuracy": round(correct / len(test_rows), 4),
+        "temperature": temperature,
+        "split_strategy": "fingerprint_stratified_hash",
+        "eligible_labels": len(eligible_labels),
+        "validated_labels": len(validation_labels),
+    }
+
+
+def summarize_training_data(examples, assignments, active_subjects):
+    examples = list(examples or [])
+    active_subjects = set(active_subjects or [])
+    if not active_subjects:
+        active_subjects = {
+            str(item.get("subject_group") or "").strip()
+            for item in examples
+            if str(item.get("subject_group") or "").strip()
+        }
+    feature_cache = {}
+    course = aggregate_training_examples(
+        examples,
+        "subject_group",
+        eligible_labels=active_subjects,
+        feature_cache=feature_cache,
+    )
+    active_assignments = {
+        str(item.get("id")): item for item in assignments or []
+        if item.get("id") and item.get("active", True)
+    }
+    assignment = {}
+    subjects = sorted({
+        item.get("subject_group")
+        for item in examples
+        if item.get("subject_group") in active_subjects
+    })
+    for subject in subjects:
+        subject_assignment_ids = {
+            assignment_id
+            for assignment_id, item in active_assignments.items()
+            if item.get("subject_group") == subject
+        }
+        assignment[subject] = aggregate_training_examples(
+            examples,
+            "assignment_id",
+            subject_group=subject,
+            eligible_labels=subject_assignment_ids,
+            feature_cache=feature_cache,
+        )
+
+    signature_rows = []
+    for row in course["rows"]:
+        signature_rows.append((
+            "course",
+            row.get("_fingerprint", ""),
+            str(row.get("subject_group") or ""),
+            round(float(row.get("weight", 1.0)), 6),
+        ))
+    for subject, details in assignment.items():
+        for row in details["rows"]:
+            signature_rows.append((
+                "assignment",
+                subject,
+                row.get("_fingerprint", ""),
+                str(row.get("assignment_id") or ""),
+                round(float(row.get("weight", 1.0)), 6),
+            ))
+    signature_payload = {
+        "schema": MODEL_SCHEMA_VERSION,
+        "feature": FEATURE_VERSION,
+        "rows": sorted(signature_rows),
+        "course_conflicts": sorted(
+            (item["fingerprint"], tuple(item["labels"]))
+            for item in course["conflicts"]
+        ),
+        "assignment_conflicts": sorted(
+            (subject, item["fingerprint"], tuple(item["labels"]))
+            for subject, details in assignment.items()
+            for item in details["conflicts"]
+        ),
+    }
+    training_signature = hashlib.sha256(
+        json.dumps(signature_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "sample_record_count": len(examples),
+        "confirmation_count": sum(example_confirmation_count(item) for item in examples),
+        "course": course,
+        "assignment": assignment,
+        "training_signature": training_signature,
     }
 
 
 def build_model_bundle(examples, assignments, active_subjects, cancel_event=None, progress=None,
                        data_version=0):
     examples = list(examples or [])
-    active_subjects = set(active_subjects or [])
+    summary = summarize_training_data(examples, assignments, active_subjects)
+    course_data = summary["course"]
+    course_counts = Counter(course_data["label_pattern_counts"])
     if progress:
         progress("course_model", 15)
-    course_counts = _label_counts(examples, "subject_group")
     course_labels = sorted(
         label for label, count in course_counts.items()
-        if count >= COURSE_MIN_PER_LABEL and (not active_subjects or label in active_subjects)
+        if count >= COURSE_MIN_PER_LABEL
     )
-    course_model = train_complement_nb(examples, "subject_group", course_labels, cancel_event) if len(course_labels) >= 2 else None
-    course_validation = _validation_result(examples, "subject_group", set(course_labels), cancel_event=cancel_event) if course_model else {"status": "insufficient", "samples": 0}
+    course_model = _train_complement_nb_rows(
+        course_data["rows"], "subject_group", course_labels, cancel_event
+    ) if len(course_labels) >= 2 else None
+    course_validation = _validation_result(
+        course_data["rows"], "subject_group", set(course_labels), cancel_event
+    ) if course_model else {"status": "insufficient", "samples": 0}
+    if course_model and course_validation.get("status") == "ready":
+        course_model["temperature"] = course_validation["temperature"]
 
     if progress:
         progress("assignment_models", 45)
-    active_assignments = {
-        str(item.get("id")): item for item in assignments or []
-        if item.get("id") and item.get("active", True)
-    }
     assignment_models = {}
     assignment_meta = {}
-    subjects = sorted({
-        item.get("subject_group")
-        for item in examples
-        if item.get("subject_group")
-        and (not active_subjects or item.get("subject_group") in active_subjects)
-    })
+    subjects = sorted(summary["assignment"])
     for index, subject in enumerate(subjects):
         if cancel_event and cancel_event.is_set():
             raise InterruptedError("训练已取消")
-        subject_rows = [
-            item for item in examples
-            if item.get("subject_group") == subject
-            and item.get("assignment_id") in active_assignments
-            and active_assignments[item.get("assignment_id")].get("subject_group") == subject
-        ]
-        counts = _label_counts(subject_rows, "assignment_id", subject)
+        subject_data = summary["assignment"][subject]
+        subject_rows = subject_data["rows"]
+        counts = Counter(subject_data["label_pattern_counts"])
         labels = sorted(label for label, count in counts.items() if count >= ASSIGNMENT_MIN_PER_LABEL)
-        model = train_complement_nb(subject_rows, "assignment_id", labels, cancel_event) if len(labels) >= 2 else None
+        model = _train_complement_nb_rows(
+            subject_rows, "assignment_id", labels, cancel_event
+        ) if len(labels) >= 2 else None
+        validation = _validation_result(
+            subject_rows, "assignment_id", set(labels), cancel_event
+        ) if model else {"status": "insufficient", "samples": 0}
+        if model and validation.get("status") == "ready":
+            model["temperature"] = validation["temperature"]
         if model:
             assignment_models[subject] = model
         assignment_meta[subject] = {
             "labels": labels,
             "sample_counts": dict(counts),
-            "validation": _validation_result(
-                subject_rows, "assignment_id", set(labels), subject, cancel_event
-            ) if model else {"status": "insufficient", "samples": 0},
+            "pattern_counts": dict(counts),
+            "confirmation_counts": subject_data["label_confirmation_counts"],
+            "pattern_count": subject_data["pattern_count"],
+            "trainable_pattern_count": subject_data["trainable_pattern_count"],
+            "conflict_pattern_count": subject_data["conflict_pattern_count"],
+            "validation": validation,
         }
         if progress and subjects:
             progress("assignment_models", 45 + int(40 * (index + 1) / len(subjects)))
@@ -513,13 +785,20 @@ def build_model_bundle(examples, assignments, active_subjects, cancel_event=None
         "schema_version": MODEL_SCHEMA_VERSION,
         "feature_version": FEATURE_VERSION,
         "trained_at": _now(),
-        "sample_count": len(examples),
+        "sample_count": summary["confirmation_count"],
+        "sample_record_count": summary["sample_record_count"],
+        "pattern_count": course_data["pattern_count"],
+        "trainable_pattern_count": course_data["trainable_pattern_count"],
+        "conflict_pattern_count": course_data["conflict_pattern_count"],
+        "training_signature": summary["training_signature"],
         "data_version": max(0, int(data_version or 0)),
         "course_model": course_model,
         "assignment_models": assignment_models,
         "meta": {
             "course_labels": course_labels,
             "course_sample_counts": dict(course_counts),
+            "course_pattern_counts": dict(course_counts),
+            "course_confirmation_counts": course_data["label_confirmation_counts"],
             "course_validation": course_validation,
             "assignment": assignment_meta,
         },
@@ -544,6 +823,12 @@ def _valid_trained_model(model):
     defaults = model.get("defaults")
     priors = model.get("priors")
     if not all(isinstance(item, dict) for item in (weights, defaults, priors)):
+        return False
+    try:
+        temperature = float(model.get("temperature", 0.0))
+    except (TypeError, ValueError):
+        return False
+    if not 0.05 <= temperature <= 2.0:
         return False
     return all(
         isinstance(label, str)
@@ -571,6 +856,8 @@ def _valid_model_bundle(bundle):
         if int(bundle.get("data_version", 0)) < 0:
             return False
     except (TypeError, ValueError):
+        return False
+    if not isinstance(bundle.get("training_signature"), str) or not bundle["training_signature"]:
         return False
     if not _valid_trained_model(bundle.get("course_model")):
         return False
@@ -610,6 +897,11 @@ def save_model_bundle(model_dir, bundle):
         "feature_version": bundle.get("feature_version"),
         "trained_at": bundle.get("trained_at"),
         "sample_count": bundle.get("sample_count", 0),
+        "sample_record_count": bundle.get("sample_record_count", 0),
+        "pattern_count": bundle.get("pattern_count", 0),
+        "trainable_pattern_count": bundle.get("trainable_pattern_count", 0),
+        "conflict_pattern_count": bundle.get("conflict_pattern_count", 0),
+        "training_signature": bundle.get("training_signature", ""),
         "data_version": bundle.get("data_version", 0),
         **(bundle.get("meta") or {}),
     })

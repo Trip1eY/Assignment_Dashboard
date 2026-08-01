@@ -6046,8 +6046,10 @@
               <section class="card">
                 <div class="section-head"><h3>模型训练</h3><span class="pill" id="brain-model-state">仅规则</span></div>
                 <div class="brain-context-summary">
-                  <div><span>确认样本</span><strong id="brain-model-samples">0</strong></div>
-                  <div><span>待训练</span><strong id="brain-model-pending">0</strong></div>
+                  <div><span>确认次数</span><strong id="brain-model-samples">0</strong></div>
+                  <div><span>独立模式</span><strong id="brain-model-patterns">0</strong></div>
+                  <div><span>待训练模式</span><strong id="brain-model-pending">0</strong></div>
+                  <div><span>冲突模式</span><strong id="brain-model-conflicts">0</strong></div>
                 </div>
                 <div class="brain-training-progress"><div id="brain-model-progress-bar"></div></div>
                 <div class="row-sub" id="brain-model-progress-text">尚未训练</div>
@@ -7354,7 +7356,7 @@ function renderBrainNetwork() {
     <article class="brain-node brain-node-model" title="本机训练的轻量课程与作业分类模型">
       <span class="brain-node-label">MODEL LAYER</span>
       <span class="brain-node-title">小型模型</span>
-      <span class="brain-node-meta"><strong>${model.state === 'training' ? '训练中' : (model.trained_at ? '已就绪' : '积累中')}</strong> · ${Number(model.sample_count || 0)} 条确认样本</span>
+      <span class="brain-node-meta"><strong>${model.state === 'training' ? '训练中' : (model.trained_at ? '已就绪' : '积累中')}</strong> · ${Number(model.pattern_count || 0)} 种独立模式</span>
     </article>
     <div class="brain-core" title="所有可用分类信号在这里汇合，并根据当前规则作出决策">
       <div class="brain-core-content"><span>CLASSIFY</span><strong>${running ? '决策中枢' : '等待启动'}</strong></div>
@@ -8872,7 +8874,8 @@ const brainModelStateLabels = {
 };
 function brainCourseModelStatus(name) {
   return (state.aiBrain?.model?.courses || []).find(item => item.subject_group === name) || {
-    state: 'rules_only', confirmed_samples: 0, pending_samples: 0,
+    state: 'rules_only', confirmed_samples: 0, pending_samples: 0, pattern_count: 0,
+    trainable_pattern_count: 0, conflict_pattern_count: 0,
     assignment_state: 'rules_only', assignment_labels: 0
   };
 }
@@ -8930,12 +8933,12 @@ function renderBrainPanelScenes() {
     kicker: 'Learning Pulse',
     title: '样本学习脉冲',
     description: '文件名先清除班级与学生信息，再进入确认记忆、相似检索和本地模型。',
-    readout: model.state === 'training' ? `训练进行中 · ${Number(model.progress || 0)}%` : `${model.sample_count || 0} 条确认样本留在本机`,
+    readout: model.state === 'training' ? `训练进行中 · ${Number(model.progress || 0)}%` : `${model.confirmation_count || model.sample_count || 0} 次确认 · ${model.pattern_count || 0} 种独立模式`,
     nodes: [
       { code: 'CONTEXT', value: context.student_count || 0, label: `${context.student_id_count || 0} 名含学号`, tone: 'green' },
-      { code: 'MEMORY', value: model.sample_count || 0, label: '人工确认样本', tone: 'violet' },
+      { code: 'MEMORY', value: model.confirmation_count || model.sample_count || 0, label: '人工确认次数', tone: 'violet' },
       { code: 'MODEL', value: stateLabel, label: '当前训练状态', tone: 'green' },
-      { code: 'DELTA', value: model.pending_sample_count || 0, label: '等待进入下一版模型', tone: 'amber' },
+      { code: 'PATTERN', value: model.trainable_pattern_count || 0, label: '可参与训练的独立模式', tone: 'amber' },
     ],
   });
   renderBrainScene('brain-scene-packs', {
@@ -8958,7 +8961,7 @@ function renderBrainPanelScenes() {
     nodes: [
       { code: 'CORRECTION', value: corrections.length, label: '课程修正记忆', tone: 'green' },
       { code: 'REJECTION', value: rejected.length, label: '非本作业负反馈', tone: 'amber' },
-      { code: 'MEMORY', value: model.sample_count || 0, label: '已沉淀确认样本', tone: 'violet' },
+      { code: 'MEMORY', value: model.pattern_count || 0, label: '已沉淀独立模式', tone: 'violet' },
       { code: 'PENDING', value: (stats.unknown || 0) + (stats.conflicts || 0), label: '仍等待人工决策', tone: 'amber' },
     ],
   });
@@ -8994,8 +8997,8 @@ function renderClassificationBrain() {
     ['活跃课程', brainStats.active_subjects || 0],
     ['模型已就绪', courseStates.filter(item => item.state === 'ready').length],
     ['正在积累', courseStates.filter(item => ['collecting', 'trainable', 'stale'].includes(item.state)).length],
-    ['确认样本', modelStatus.sample_count || 0],
-    ['待训练', modelStatus.pending_sample_count || 0],
+    ['确认次数', modelStatus.confirmation_count || modelStatus.sample_count || 0],
+    ['独立模式', modelStatus.pattern_count || 0],
     ['未知 / 冲突', (brainStats.unknown || 0) + (brainStats.conflicts || 0)],
   ].map(([label, value]) => `<div class="brain-stat"><span>${label}</span><strong>${value}</strong></div>`).join('');
   const subjects = Object.entries(rules.subjects || {});
@@ -9058,7 +9061,7 @@ function renderBrainCourses() {
     const modelLabel = brainModelStateLabels[model.state] || model.state || '仅规则';
     const assignmentLabel = brainModelStateLabels[model.assignment_state] || model.assignment_state || '仅规则';
     return `<div class="brain-course-row" data-course-index="${index}">
-    <label class="brain-field"><span>正式课程</span><input class="brain-course-name" value="${escapeHtml(name)}"><div class="brain-course-model"><div class="brain-course-model-head"><span class="brain-model-state ${escapeHtml(model.state)}">${escapeHtml(modelLabel)}</span><small>课程样本 ${model.confirmed_samples || 0}</small></div><small>作业模型：${escapeHtml(assignmentLabel)} · ${model.assignment_labels || 0} 个节点</small></div></label>
+    <label class="brain-field"><span>正式课程</span><input class="brain-course-name" value="${escapeHtml(name)}"><div class="brain-course-model"><div class="brain-course-model-head"><span class="brain-model-state ${escapeHtml(model.state)}">${escapeHtml(modelLabel)}</span><small>${model.confirmation_count || model.confirmed_samples || 0} 次确认 · ${model.pattern_count || 0} 种模式</small></div><small>可训练 ${model.trainable_pattern_count || 0} · 冲突 ${model.conflict_pattern_count || 0} · 作业模型 ${escapeHtml(assignmentLabel)} / ${model.assignment_labels || 0} 个节点</small></div></label>
     <label class="brain-field"><span>确认别名 · ${(item.confirmed_aliases || []).length} 个</span><textarea class="brain-course-aliases" placeholder="每行或用逗号填写一个别名">${escapeHtml((item.confirmed_aliases || []).join('，'))}</textarea></label>
     <label class="brain-field"><span>AI 待确认别名 · ${(item.suggested_aliases || []).length} 个</span><textarea class="brain-course-suggested" placeholder="确认前不参与分类">${escapeHtml((item.suggested_aliases || []).join('，'))}</textarea></label>
     <label class="brain-field"><span>课程关键词 · ${(item.keywords || []).length} 个</span><textarea class="brain-course-keywords" placeholder="每行或用逗号填写一个关键词">${escapeHtml((item.keywords || []).join('，'))}</textarea></label>
@@ -9303,9 +9306,13 @@ function renderBrainLearning() {
     modelState.className = `pill ${model.state === 'failed' ? 'bad' : model.state === 'training' ? 'warn' : ''}`;
   }
   const samples = document.getElementById('brain-model-samples');
+  const patterns = document.getElementById('brain-model-patterns');
   const pending = document.getElementById('brain-model-pending');
-  if (samples) samples.textContent = model.sample_count || 0;
-  if (pending) pending.textContent = model.pending_sample_count || 0;
+  const conflicts = document.getElementById('brain-model-conflicts');
+  if (samples) samples.textContent = model.confirmation_count || model.sample_count || 0;
+  if (patterns) patterns.textContent = model.pattern_count || 0;
+  if (pending) pending.textContent = model.pending_pattern_count || 0;
+  if (conflicts) conflicts.textContent = model.conflict_pattern_count || 0;
   const progress = Number(model.progress || 0);
   const progressBar = document.getElementById('brain-model-progress-bar');
   if (progressBar) progressBar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
@@ -9319,12 +9326,12 @@ function renderBrainLearning() {
           ? `最近训练：${formatTime(model.trained_at)}`
           : model.trainable
             ? '样本已达到训练条件'
-            : '至少需要两个课程各 5 条确认样本';
+            : '至少需要两个课程各 5 种独立文件名模式';
   }
   const validation = document.getElementById('brain-model-validation');
   if (validation) {
     validation.textContent = model.validation?.status === 'ready'
-      ? `真实留出验证：${Math.round(Number(model.validation.accuracy || 0) * 100)}% · ${model.validation.samples || 0} 条`
+      ? `独立模式留出验证：${Math.round(Number(model.validation.accuracy || 0) * 100)}% · ${model.validation.patterns || model.validation.samples || 0} 种 · ${model.validation.split_strategy === 'fingerprint_stratified_hash' ? '无重复泄漏' : '分组验证'}`
       : '验证样本不足，暂不展示准确率。';
   }
   const trainButton = document.getElementById('brain-model-train');
