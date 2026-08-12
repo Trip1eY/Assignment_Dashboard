@@ -61,6 +61,7 @@ FILE_TYPE_GROUPS = {
 INSTALL_FILES = [
     "server.py",
     "ai_classifier.py",
+    "external_ai.py",
     "classifier_features.py",
     "classifier_trainer.py",
     "restart_helper.py",

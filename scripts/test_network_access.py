@@ -34,8 +34,14 @@ class LocalHandler(RemoteHandler):
 class NetworkAccessTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.original_config_path = server.CONFIG_PATH
+        self.original_paths = (
+            server.CONFIG_PATH,
+            server.AI_SECRETS_PATH,
+            server.AI_EXTERNAL_HISTORY_PATH,
+        )
         server.CONFIG_PATH = Path(self.tmp.name) / "config.json"
+        server.AI_SECRETS_PATH = Path(self.tmp.name) / "ai_secrets.json"
+        server.AI_EXTERNAL_HISTORY_PATH = Path(self.tmp.name) / "ai_external_history.json"
         cfg = server.default_config()
         cfg.update({"lan_access_enabled": True, "lan_access_token": "test-access-code"})
         server.save_json(server.CONFIG_PATH, cfg)
@@ -48,7 +54,11 @@ class NetworkAccessTest(unittest.TestCase):
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=2)
-        server.CONFIG_PATH = self.original_config_path
+        (
+            server.CONFIG_PATH,
+            server.AI_SECRETS_PATH,
+            server.AI_EXTERNAL_HISTORY_PATH,
+        ) = self.original_paths
         self.tmp.cleanup()
 
     def request(self, path, method="GET", data=None, headers=None, opener=None):
@@ -101,6 +111,41 @@ class NetworkAccessTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.request("/api/network-access/configure", method="POST", data={"enabled": False},
                          headers={"Cookie": cookie})
+        self.assertEqual(ctx.exception.code, 403)
+
+    def test_authenticated_remote_cannot_change_external_credentials(self):
+        response = self.request("/api/lan-auth", method="POST", data={"token": "test-access-code"})
+        cookie = response.headers.get("Set-Cookie").split(";", 1)[0]
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.request(
+                "/api/ai/external/settings",
+                method="POST",
+                data={"provider": "openai_compatible", "api_key": "stolen"},
+                headers={"Cookie": cookie},
+            )
+        self.assertEqual(ctx.exception.code, 403)
+        self.assertFalse(server.AI_SECRETS_PATH.exists())
+
+    def test_authenticated_remote_external_status_never_returns_key_mask(self):
+        server.save_external_ai_secret("super-secret-key")
+        response = self.request("/api/lan-auth", method="POST", data={"token": "test-access-code"})
+        cookie = response.headers.get("Set-Cookie").split(";", 1)[0]
+        response = self.request("/api/ai/external/settings", headers={"Cookie": cookie})
+        payload = json.loads(response.read().decode("utf-8"))
+        self.assertTrue(payload["settings"]["key_configured"])
+        self.assertEqual(payload["settings"]["key_masked"], "")
+        self.assertNotIn("super-secret-key", json.dumps(payload))
+
+    def test_authenticated_remote_cannot_manually_call_external_model(self):
+        response = self.request("/api/lan-auth", method="POST", data={"token": "test-access-code"})
+        cookie = response.headers.get("Set-Cookie").split(";", 1)[0]
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.request(
+                "/api/ai/external/classify",
+                method="POST",
+                data={"file_name": "未知作业.docx"},
+                headers={"Cookie": cookie},
+            )
         self.assertEqual(ctx.exception.code, 403)
 
     def test_local_user_can_change_mode_and_receive_token(self):

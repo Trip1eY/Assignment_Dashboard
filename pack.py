@@ -20,6 +20,7 @@ PACK_CONFIG = {
     "include_files": [
         "server.py",
         "ai_classifier.py",
+        "external_ai.py",
         "classifier_features.py",
         "classifier_trainer.py",
         "restart_helper.py",

@@ -2303,6 +2303,37 @@
   .brain-scene.scene-learning { --scene-accent: #9b8cff; --scene-accent-2: #51d5e5; }
   .brain-scene.scene-packs { --scene-accent: #f5b957; --scene-accent-2: #ff8f70; }
   .brain-scene.scene-feedback { --scene-accent: #ff7f98; --scene-accent-2: #9b8cff; }
+  .brain-scene.scene-external { --scene-accent: #58d6ff; --scene-accent-2: #f5b957; }
+  .external-provider-switch {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .external-provider-switch button { min-height: 44px; }
+  .external-provider-switch button.active {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+    background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
+  }
+  .external-setting-stack { display: grid; gap: 12px; }
+  .brain-field[hidden] { display: none; }
+  .external-key-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .external-privacy-preview {
+    min-height: 180px;
+    max-height: 320px;
+    overflow: auto;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--panel-2) 80%, transparent);
+    color: var(--muted);
+    font: 12px/1.65 "Cascadia Mono", Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .external-history { display: grid; gap: 8px; max-height: 310px; overflow: auto; }
+  .external-history .row { grid-template-columns: minmax(0, 1fr) auto; }
   @keyframes brainSceneSweep {
     0%, 18% { transform: translateX(-100%); opacity: 0; }
     42% { opacity: 1; }
@@ -5978,6 +6009,7 @@
           <button data-brain-tab="courses">本学期课程</button>
           <button data-brain-tab="learning">学习增强</button>
           <button data-brain-tab="packs">专业包</button>
+          <button data-brain-tab="external">外部增强</button>
           <button data-brain-tab="feedback">训练与纠错</button>
         </div>
 
@@ -6173,6 +6205,43 @@
               <div id="brain-import-preview" class="empty">尚未载入专业包。</div>
               <div id="brain-import-status" class="card-foot" aria-live="polite"></div>
             </div>
+          </div>
+        </div>
+
+        <div class="brain-panel" id="brain-panel-external">
+          <section class="brain-scene scene-external" id="brain-scene-external" aria-label="外部模型增强链路"></section>
+          <div class="brain-grid" id="brain-external-stats"></div>
+          <div class="brain-layout" style="margin-top:16px">
+            <section class="card">
+              <div class="section-head"><h3>外部模型配置</h3><span class="pill" id="brain-external-state">已关闭</span></div>
+              <div class="external-setting-stack">
+                <label class="toggle-row"><span><strong>启用外部增强</strong><small class="row-sub">只在本地判断不确定时调用</small></span><span class="apple-switch"><input id="brain-external-enabled" type="checkbox" onchange="renderExternalProviderFields()"><span class="apple-switch-track"></span></span></label>
+                <div class="external-provider-switch" role="group" aria-label="外部模型提供方">
+                  <button id="brain-provider-ollama" onclick="selectExternalProvider('ollama')">Ollama</button>
+                  <button id="brain-provider-cloud" onclick="selectExternalProvider('openai_compatible')">云端 API</button>
+                </div>
+                <label class="brain-field"><span>服务地址</span><input id="brain-external-endpoint" placeholder="http://localhost:11434/api/generate"></label>
+                <label class="brain-field"><span>模型名称</span><input id="brain-external-model" placeholder="qwen2.5:0.5b"></label>
+                <label class="brain-field" id="brain-external-key-field"><span>API Key</span><div class="external-key-row"><input id="brain-external-key" type="password" autocomplete="new-password" placeholder="保留为空则继续使用已保存的 Key"><button title="显示或隐藏 API Key" onclick="toggleExternalKeyVisibility()">显示</button></div><small class="row-sub" id="brain-external-key-status">未配置</small></label>
+                <div class="form-grid">
+                  <label class="brain-field"><span>调用策略</span><select id="brain-external-strategy"><option value="uncertain">自动处理不确定项</option><option value="manual">仅手动调用</option></select></label>
+                  <label class="brain-field"><span>超时（秒）</span><input id="brain-external-timeout" type="number" min="2" max="60" value="8"></label>
+                  <label class="brain-field"><span>每分钟上限</span><input id="brain-external-minute-limit" type="number" min="1" max="60" value="5"></label>
+                  <label class="brain-field"><span>每日上限</span><input id="brain-external-daily-limit" type="number" min="1" max="5000" value="100"></label>
+                </div>
+                <label class="toggle-row"><span><strong>仅提供建议</strong><small class="row-sub">关闭后，高置信度结果仍须经过课程树和分差校验</small></span><span class="apple-switch"><input id="brain-external-suggestion-only" type="checkbox" checked><span class="apple-switch-track"></span></span></label>
+                <label class="brain-field"><span>自动采用阈值 <strong id="brain-external-confidence-value">0.75</strong></span><input id="brain-external-confidence" type="range" min="0.50" max="0.99" step="0.01" value="0.75" oninput="document.getElementById('brain-external-confidence-value').textContent=Number(this.value).toFixed(2)"></label>
+                <div class="file-actions"><button class="primary" onclick="saveExternalAISettings()">保存设置</button><button onclick="testExternalAI()">连接测试</button><button class="danger" onclick="clearExternalAIKey()">清除 Key</button></div>
+                <div class="card-foot" id="brain-external-feedback" aria-live="polite">外部增强默认关闭。</div>
+              </div>
+            </section>
+            <section class="card">
+              <div class="section-head"><h3>隐私预览</h3><span class="pill good">只发送这些字段</span></div>
+              <label class="brain-field"><span>测试文件名</span><input id="brain-external-test-name" value="数电第三次实验报告.docx"></label>
+              <div class="external-privacy-preview" id="brain-external-privacy">规范化文件名、扩展名、当前课程候选和当前作业候选。不会发送姓名、学号、完整路径、学生名单或文件正文。</div>
+              <div class="section-head" style="margin-top:18px"><h3>最近调用</h3><button onclick="refreshExternalAI()">刷新</button></div>
+              <div class="external-history" id="brain-external-history"><div class="empty">还没有外部模型调用。</div></div>
+            </section>
           </div>
         </div>
 
@@ -6464,7 +6533,8 @@ let state = {
   aiPreviewPage: 0,
   aiPreviewPageSize: 50,
   aiDroppedEntries: [],
-  aiInspectResult: null
+  aiInspectResult: null,
+  aiExternal: { settings: {}, status: {}, history: [] }
 };
 let previewWarmupTimer = null;
 let brainModelTimer = null;
@@ -6912,6 +6982,7 @@ document.getElementById('brain-tabs')?.addEventListener('click', (e) => {
   document.querySelectorAll('#brain-tabs button').forEach(item => item.classList.toggle('active', item === button));
   document.querySelectorAll('.brain-panel').forEach(panel => panel.classList.toggle('active', panel.id === 'brain-panel-' + tab));
   if (tab === 'learning') refreshBrainExamples(false);
+  if (tab === 'external') refreshExternalAI();
 });
 
 function isDeveloperUrl() {
@@ -7218,9 +7289,18 @@ async function loadAll() {
   state.network = network || {};
   state.previewWarmup = previewWarmup || {};
   try {
-    const [brain, rules] = await Promise.all([apiGet('/api/ai/brain'), apiGet('/api/ai/rules')]);
+    const [brain, rules, external] = await Promise.all([
+      apiGet('/api/ai/brain'),
+      apiGet('/api/ai/rules'),
+      apiGet('/api/ai/external/settings'),
+    ]);
     state.aiBrain = brain || {};
     state.aiRules = rules?.rule_pack || { schema_version: 1, profile: {}, subjects: {}, types: {} };
+    state.aiExternal = {
+      settings: external?.settings || {},
+      status: external?.status || {},
+      history: [],
+    };
   } catch (e) {
     state.aiBrain = { available: false, stats: {}, settings: { mode: 'off', sensitivity: .70 } };
     state.aiRules = { schema_version: 1, profile: {}, subjects: {}, types: {} };
@@ -7312,6 +7392,7 @@ function renderBrainNetwork() {
   const issues = Number(stats.unknown || 0) + Number(stats.conflicts || 0);
   const corrections = Number(stats.corrections || 0);
   const model = brain.model || {};
+  const settings = brain.settings || { mode: 'rules' };
   const recentFiles = (state.dashboard?.recent_files || []).length;
   const keywords = Number(stats.keywords || subjects.reduce((count, [, item]) => count + (item.keywords || []).length, 0));
   const running = brain.available !== false && mode !== 'off';
@@ -8907,6 +8988,7 @@ function renderBrainPanelScenes() {
   const model = brain.model || {};
   const context = brain.context || {};
   const stats = brain.stats || {};
+  const settings = brain.settings || { mode: 'rules' };
   const subjects = Object.entries(rules.subjects || {});
   const activeSubjects = subjects.filter(([, item]) => item.active !== false);
   const assignments = (brain.assignments || state.assignments || []).filter(item => item.active !== false);
@@ -8952,6 +9034,19 @@ function renderBrainPanelScenes() {
       { code: 'COURSES', value: subjects.length, label: '专业包课程范围', tone: 'violet' },
       { code: 'ALIASES', value: aliasCount, label: '已确认课程别名', tone: 'green' },
       { code: 'KNOWLEDGE', value: keywordCount, label: '课程知识关键词', tone: 'amber' },
+    ],
+  });
+  const external = brain.external || state.aiExternal?.status || {};
+  renderBrainScene('brain-scene-external', {
+    kicker: 'External Inference Gate',
+    title: '外部推理门控',
+    description: '只有本地信号不确定时，脱敏文件名才会通过限流门控进入可选外部模型。',
+    readout: external.enabled ? `${external.provider === 'ollama' ? 'Ollama' : '云端 API'} · ${external.model || '等待模型'}` : '外部链路保持断开',
+    nodes: [
+      { code: 'LOCAL', value: settings.mode === 'local_model' ? '规则 + 模型' : '规则', label: '本地优先决策', tone: 'green' },
+      { code: 'GATE', value: external.enabled ? '待命' : '关闭', label: '低置信度与冲突门控', tone: 'amber' },
+      { code: 'REMOTE', value: external.provider === 'openai_compatible' ? 'CLOUD' : 'OLLAMA', label: external.model || '未配置模型', tone: 'violet' },
+      { code: 'VERIFY', value: activeSubjects.length, label: '课程树二次校验', tone: 'green' },
     ],
   });
   renderBrainScene('brain-scene-feedback', {
@@ -9019,6 +9114,7 @@ function renderClassificationBrain() {
   hydrateBrainPackForm();
   renderBrainNetwork();
   renderBrainPanelScenes();
+  if (state.aiExternal?.settings && Object.keys(state.aiExternal.settings).length) renderExternalAI();
 }
 
 function updateBrainSensitivityLabel() {
@@ -9050,6 +9146,162 @@ async function saveBrainSettings() {
   state.aiBrain = { ...(state.aiBrain || {}), settings: resp.settings, model: resp.model || state.aiBrain?.model };
   renderClassificationBrain();
   toast('分类设置已保存');
+}
+
+function selectExternalProvider(provider) {
+  state.aiExternal = state.aiExternal || { settings: {}, status: {}, history: [] };
+  const previous = state.aiExternal.settings?.provider;
+  state.aiExternal.settings = { ...(state.aiExternal.settings || {}), provider };
+  const endpoint = document.getElementById('brain-external-endpoint');
+  const model = document.getElementById('brain-external-model');
+  const previousDefault = previous === 'openai_compatible'
+    ? 'https://api.openai.com/v1/chat/completions'
+    : 'http://localhost:11434/api/generate';
+  if (endpoint && (!endpoint.value.trim() || endpoint.value.trim() === previousDefault)) {
+    endpoint.value = provider === 'openai_compatible'
+      ? 'https://api.openai.com/v1/chat/completions'
+      : 'http://localhost:11434/api/generate';
+  }
+  if (model && !model.value.trim()) model.value = provider === 'openai_compatible' ? 'gpt-4.1-mini' : 'qwen2.5:0.5b';
+  renderExternalProviderFields();
+}
+
+function renderExternalProviderFields() {
+  const settings = state.aiExternal?.settings || {};
+  const provider = settings.provider || 'ollama';
+  document.getElementById('brain-provider-ollama')?.classList.toggle('active', provider === 'ollama');
+  document.getElementById('brain-provider-cloud')?.classList.toggle('active', provider === 'openai_compatible');
+  const keyField = document.getElementById('brain-external-key-field');
+  if (keyField) keyField.hidden = provider !== 'openai_compatible';
+  const enabled = !!document.getElementById('brain-external-enabled')?.checked;
+  const pill = document.getElementById('brain-external-state');
+  if (pill) {
+    pill.textContent = enabled ? (provider === 'ollama' ? 'Ollama 待命' : '云端待命') : '已关闭';
+    pill.className = `pill ${enabled ? 'good' : ''}`;
+  }
+}
+
+function toggleExternalKeyVisibility() {
+  const input = document.getElementById('brain-external-key');
+  if (!input) return;
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+function renderExternalAI() {
+  const settings = state.aiExternal?.settings || {};
+  const status = state.aiExternal?.status || state.aiBrain?.external || {};
+  const values = {
+    'brain-external-enabled': !!settings.enabled,
+    'brain-external-endpoint': settings.endpoint || '',
+    'brain-external-model': settings.model || '',
+    'brain-external-strategy': settings.strategy || 'uncertain',
+    'brain-external-timeout': settings.timeout_seconds || 8,
+    'brain-external-minute-limit': settings.minute_limit || 5,
+    'brain-external-daily-limit': settings.daily_limit || 100,
+    'brain-external-suggestion-only': settings.suggestion_only !== false,
+    'brain-external-confidence': Number(settings.min_confidence || .75).toFixed(2),
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (!element) return;
+    if (element.type === 'checkbox') element.checked = !!value;
+    else element.value = value;
+  });
+  const confidence = document.getElementById('brain-external-confidence-value');
+  if (confidence) confidence.textContent = Number(settings.min_confidence || .75).toFixed(2);
+  const keyStatus = document.getElementById('brain-external-key-status');
+  if (keyStatus) keyStatus.textContent = settings.key_configured
+    ? `已配置 ${settings.key_masked || '本机密钥'}` : '未配置';
+  const stats = document.getElementById('brain-external-stats');
+  if (stats) stats.innerHTML = [
+    ['今日调用', `${status.daily_calls || 0} / ${status.daily_limit || settings.daily_limit || 100}`],
+    ['分钟用量', `${status.minute_calls || 0} / ${status.minute_limit || settings.minute_limit || 5}`],
+    ['成功率', status.success_rate == null ? '暂无' : `${Math.round(Number(status.success_rate) * 100)}%`],
+    ['平均耗时', status.average_elapsed_ms ? `${status.average_elapsed_ms} ms` : '暂无'],
+  ].map(([label, value]) => `<div class="brain-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
+  const history = document.getElementById('brain-external-history');
+  if (history) history.innerHTML = (state.aiExternal?.history || []).map(item => `<div class="row"><div><div class="row-title">${escapeHtml(item.status === 'success' ? '调用成功' : item.status === 'rejected' ? '响应被拒绝' : '已降级')}</div><div class="row-sub">${escapeHtml(item.provider || '')} · ${escapeHtml(item.model || '')} · ${escapeHtml(item.trigger || item.category || '')}</div></div><div class="row-sub">${item.elapsed_ms || 0} ms<br>${escapeHtml(formatTime(item.time))}</div></div>`).join('') || '<div class="empty">还没有外部模型调用。</div>';
+  renderExternalProviderFields();
+  renderBrainPanelScenes();
+}
+
+async function refreshExternalAI(showToast = false) {
+  try {
+    const [payload, history] = await Promise.all([
+      apiGet('/api/ai/external/settings'),
+      apiGet('/api/ai/external/history'),
+    ]);
+    state.aiExternal = {
+      settings: payload.settings || {},
+      status: payload.status || {},
+      history: history.items || [],
+    };
+    renderExternalAI();
+    if (showToast) toast('外部增强状态已刷新');
+  } catch (error) {
+    const feedback = document.getElementById('brain-external-feedback');
+    if (feedback) feedback.textContent = error.message || '外部增强状态读取失败';
+  }
+}
+
+function collectExternalAISettings(extra = {}) {
+  return {
+    enabled: !!document.getElementById('brain-external-enabled')?.checked,
+    provider: state.aiExternal?.settings?.provider || 'ollama',
+    endpoint: document.getElementById('brain-external-endpoint')?.value.trim() || '',
+    model: document.getElementById('brain-external-model')?.value.trim() || '',
+    strategy: document.getElementById('brain-external-strategy')?.value || 'uncertain',
+    suggestion_only: !!document.getElementById('brain-external-suggestion-only')?.checked,
+    timeout_seconds: Number(document.getElementById('brain-external-timeout')?.value || 8),
+    minute_limit: Number(document.getElementById('brain-external-minute-limit')?.value || 5),
+    daily_limit: Number(document.getElementById('brain-external-daily-limit')?.value || 100),
+    min_confidence: Number(document.getElementById('brain-external-confidence')?.value || .75),
+    api_key: document.getElementById('brain-external-key')?.value || '',
+    ...extra,
+  };
+}
+
+async function saveExternalAISettings(extra = {}) {
+  const feedback = document.getElementById('brain-external-feedback');
+  if (feedback) feedback.textContent = '正在保存外部增强设置...';
+  try {
+    const response = await apiPost('/api/ai/external/settings', collectExternalAISettings(extra));
+    state.aiExternal.settings = response.settings || {};
+    state.aiExternal.status = response.status || {};
+    const key = document.getElementById('brain-external-key');
+    if (key) key.value = '';
+    renderExternalAI();
+    if (feedback) feedback.textContent = '设置已保存到本机。';
+    toast('外部增强设置已保存');
+    return true;
+  } catch (error) {
+    if (feedback) feedback.textContent = error.message || '保存失败';
+    return false;
+  }
+}
+
+async function clearExternalAIKey() {
+  if (!confirm('确定清除本机保存的云端 API Key 吗？')) return;
+  await saveExternalAISettings({ clear_key: true, enabled: false, api_key: '' });
+}
+
+async function testExternalAI() {
+  const saved = await saveExternalAISettings();
+  if (!saved) return;
+  const feedback = document.getElementById('brain-external-feedback');
+  if (feedback) feedback.textContent = '正在发送脱敏测试请求...';
+  try {
+    const fileName = document.getElementById('brain-external-test-name')?.value.trim() || '分类连接测试.docx';
+    const response = await apiPost('/api/ai/external/test', { file_name: fileName });
+    const privacy = document.getElementById('brain-external-privacy');
+    if (privacy) privacy.textContent = JSON.stringify(response.privacy_preview || {}, null, 2);
+    if (feedback) feedback.textContent = `连接成功 · ${response.result?.elapsed_ms || 0} ms`;
+    toast('外部模型连接成功');
+    await refreshExternalAI();
+  } catch (error) {
+    if (feedback) feedback.textContent = error.message || '连接测试失败，现有分类器仍可继续工作。';
+    await refreshExternalAI();
+  }
 }
 
 function renderBrainCourses() {

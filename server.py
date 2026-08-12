@@ -74,6 +74,14 @@ except Exception as _ai_import_error:
     HAS_AI_CLASSIFIER = False
     print(f"[WARN] 分类大脑模块不可用，已降级到原有规则：{_ai_import_error}")
 
+try:
+    import external_ai
+    HAS_EXTERNAL_AI = True
+except Exception as _external_ai_import_error:
+    external_ai = None
+    HAS_EXTERNAL_AI = False
+    print(f"[WARN] 外部增强模块不可用，规则与本地模型继续运行：{_external_ai_import_error}")
+
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """多线程 HTTP 服务器，每个请求在独立线程中处理"""
     daemon_threads = True
@@ -92,7 +100,12 @@ WATCHER_STATE_FILE = DATA_DIR / "watcher_state.json"
 AI_RULES_PATH = DATA_DIR / "ai_rules.json"
 AI_EXAMPLES_PATH = DATA_DIR / "ai_examples.json"
 AI_MODELS_DIR = DATA_DIR / "models"
+AI_SECRETS_PATH = DATA_DIR / "ai_secrets.json"
+AI_EXTERNAL_HISTORY_PATH = DATA_DIR / "ai_external_history.json"
 AI_AUTO_TRAIN_DELAY_SECONDS = 30.0
+AI_EXTERNAL_HISTORY_LIMIT = 5000
+_ai_external_lock = threading.Lock()
+_ai_external_call_lock = threading.Lock()
 
 _ai_training_lock = threading.RLock()
 _ai_training_cancel = threading.Event()
@@ -924,6 +937,387 @@ def save_ai_rules(payload):
     return ai_classifier.save_rule_pack(AI_RULES_PATH, payload)
 
 
+def external_ai_settings(cfg=None):
+    if not external_ai:
+        return {
+            "enabled": False, "provider": "unavailable", "endpoint": "", "model": "",
+            "strategy": "manual", "suggestion_only": True, "timeout_seconds": 8,
+            "minute_limit": 5, "daily_limit": 100, "min_confidence": 0.75,
+        }
+    cfg = cfg or load_config_raw()
+    value = cfg.get("ai_external") if isinstance(cfg.get("ai_external"), dict) else {}
+    try:
+        return external_ai.normalize_settings(value)
+    except ValueError:
+        return external_ai.normalize_settings({"enabled": False})
+
+
+def load_external_ai_secrets():
+    payload = load_json(AI_SECRETS_PATH, {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def save_external_ai_secret(api_key):
+    key = str(api_key or "").strip()[:1000]
+    payload = {"api_key": key} if key else {}
+    save_json(AI_SECRETS_PATH, payload)
+    try:
+        os.chmod(AI_SECRETS_PATH, stat.S_IREAD | stat.S_IWRITE)
+    except OSError:
+        pass
+    return bool(key)
+
+
+def public_external_ai_settings(cfg=None):
+    settings = external_ai_settings(cfg)
+    key = str(load_external_ai_secrets().get("api_key") or "")
+    return {
+        **settings,
+        "key_configured": bool(key),
+        "key_masked": external_ai.mask_key(key) if external_ai else "",
+    }
+
+
+def load_external_ai_history():
+    payload = load_json(AI_EXTERNAL_HISTORY_PATH, {"items": []})
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    return [item for item in items if isinstance(item, dict)][-AI_EXTERNAL_HISTORY_LIMIT:]
+
+
+def record_external_ai_event(provider, model, status, elapsed_ms=0, category="", trigger="",
+                             counted=True):
+    item = {
+        "time": external_ai.utc_now(),
+        "provider": str(provider or "")[:40],
+        "model": str(model or "")[:120],
+        "status": str(status or "")[:40],
+        "elapsed_ms": max(0, int(elapsed_ms or 0)),
+        "category": str(category or "")[:80],
+        "trigger": str(trigger or "")[:80],
+        "counted": bool(counted),
+    }
+    try:
+        with _ai_external_lock:
+            items = load_external_ai_history()
+            items.append(item)
+            save_json(AI_EXTERNAL_HISTORY_PATH, {"items": items[-AI_EXTERNAL_HISTORY_LIMIT:]})
+    except Exception as exc:
+        # History is diagnostic only. A write failure must never break classification.
+        print(f"[WARN] 外部模型调用状态未保存：{type(exc).__name__}")
+    return item
+
+
+def external_ai_status(cfg=None):
+    settings = external_ai_settings(cfg)
+    history = load_external_ai_history()
+    minute, day = external_ai.usage_counts(history) if external_ai else (0, 0)
+    completed = [
+        item for item in history if item.get("status") in ("success", "rejected", "failed")
+    ]
+    successes = [item for item in history if item.get("status") == "success"]
+    return {
+        "available": bool(external_ai),
+        "enabled": settings["enabled"],
+        "provider": settings["provider"],
+        "model": settings["model"],
+        "key_configured": public_external_ai_settings(cfg)["key_configured"],
+        "minute_calls": minute,
+        "daily_calls": day,
+        "minute_limit": settings["minute_limit"],
+        "daily_limit": settings["daily_limit"],
+        "success_rate": round(len(successes) / len(completed), 4) if completed else None,
+        "average_elapsed_ms": (
+            round(sum(item.get("elapsed_ms", 0) for item in completed) / len(completed))
+            if completed else 0
+        ),
+        "last_event": history[-1] if history else {},
+    }
+
+
+def external_ai_context(filename, cfg=None, rules=None, assignments=None):
+    cfg = cfg or load_config_raw()
+    rules = rules or load_ai_rules()
+    assignments = assignments if assignments is not None else cfg.get("assignments", [])
+    parsed = inspect_ai_filename(filename, cfg=cfg, rules=rules)
+    subjects = _active_ai_subjects(cfg, rules)
+    active_assignments = [
+        item for item in assignments
+        if item.get("active", True)
+        and str(item.get("subject_group") or item.get("subject") or "").strip() in subjects
+    ]
+    return {
+        "normalized_text": str(parsed.get("normalized_text") or "")[:500],
+        "extension": Path(str(filename or "")).suffix.lower().lstrip(".")[:20],
+        "courses": sorted(subjects),
+        "assignments": [
+            {
+                "id": str(item.get("id") or "")[:100],
+                "subject_group": str(item.get("subject_group") or item.get("subject") or "")[:80],
+                "name": str(item.get("name") or "")[:120],
+                "experiment": str(item.get("experiment") or "")[:100],
+            }
+            for item in active_assignments if item.get("id")
+        ],
+    }
+
+
+def should_call_external_ai(result, settings, manual=False):
+    if not settings.get("enabled"):
+        return False, "external_disabled"
+    if settings.get("strategy") == "manual" and not manual:
+        return False, "manual_only"
+    if manual:
+        return True, "manual_request"
+    if result.get("source") in ("feedback", "confirmed_alias", "official_name"):
+        return False, "trusted_local_signal"
+    status = result.get("status", "")
+    blocker = result.get("auto_adopt_blocker", "")
+    if status in ("subject_conflict", "subject_suggested", "unknown_subject", "unmatched"):
+        return True, blocker or status
+    if blocker:
+        return True, blocker
+    return False, "local_result_sufficient"
+
+
+def call_external_ai(filename, cfg=None, rules=None, assignments=None, trigger="uncertain"):
+    cfg = cfg or load_config_raw()
+    settings = external_ai_settings(cfg)
+    history = load_external_ai_history()
+    started = time.perf_counter()
+    if not external_ai:
+        return {
+            "called": False, "ok": False, "trigger": trigger,
+            "error_category": "unavailable", "message": "外部增强模块不可用", "result": {},
+        }
+    if not _ai_external_call_lock.acquire(blocking=False):
+        record_external_ai_event(
+            settings["provider"], settings["model"], "failed", 0, "busy", trigger, False
+        )
+        return {
+            "called": True, "ok": False, "provider": settings["provider"],
+            "model": settings["model"], "elapsed_ms": 0, "trigger": trigger,
+            "error_category": "busy", "message": "已有外部模型请求正在处理", "result": {},
+        }
+    try:
+        external_ai.enforce_rate_limit(history, settings)
+        context = external_ai_context(filename, cfg, rules, assignments)
+        if not context["normalized_text"]:
+            raise external_ai.ExternalAIError("脱敏后没有可发送的文件名文本", "empty_text")
+        result = external_ai.classify(
+            context,
+            settings,
+            load_external_ai_secrets().get("api_key", ""),
+        )
+        elapsed = int(round((time.perf_counter() - started) * 1000))
+        record_external_ai_event(
+            settings["provider"], settings["model"], "success", elapsed, "", trigger
+        )
+        return {
+            "called": True,
+            "ok": True,
+            "provider": settings["provider"],
+            "model": settings["model"],
+            "elapsed_ms": elapsed,
+            "trigger": trigger,
+            "result": result,
+        }
+    except external_ai.ExternalAIError as exc:
+        elapsed = int(round((time.perf_counter() - started) * 1000))
+        event_status = "rejected" if exc.category in {
+            "invalid_json", "invalid_schema", "unknown_subject", "unknown_assignment",
+            "tree_conflict", "response_too_large",
+        } else "failed"
+        record_external_ai_event(
+            settings["provider"], settings["model"], event_status, elapsed, exc.category, trigger,
+            exc.category not in {"minute_limit", "daily_limit"},
+        )
+        return {
+            "called": True,
+            "ok": False,
+            "provider": settings["provider"],
+            "model": settings["model"],
+            "elapsed_ms": elapsed,
+            "trigger": trigger,
+            "error_category": exc.category,
+            "message": str(exc),
+            "result": {},
+        }
+    except Exception as exc:
+        elapsed = int(round((time.perf_counter() - started) * 1000))
+        print(f"[WARN] 外部模型增强失败，已回退到本地分类：{type(exc).__name__}")
+        record_external_ai_event(
+            settings["provider"], settings["model"], "failed", elapsed,
+            "internal_error", trigger,
+        )
+        return {
+            "called": True,
+            "ok": False,
+            "provider": settings["provider"],
+            "model": settings["model"],
+            "elapsed_ms": elapsed,
+            "trigger": trigger,
+            "error_category": "internal_error",
+            "message": "外部模型调用失败，已回退到本地分类",
+            "result": {},
+        }
+    finally:
+        _ai_external_call_lock.release()
+
+
+def apply_external_ai_result(local_result, external_payload, cfg=None):
+    result = dict(local_result or {})
+    settings = external_ai_settings(cfg)
+    result["external_ai"] = {
+        key: external_payload.get(key)
+        for key in (
+            "called", "ok", "provider", "model", "elapsed_ms", "trigger",
+            "error_category", "message",
+        ) if key in external_payload
+    }
+    external_result = external_payload.get("result") or {}
+    result["external_ai"]["suggestion"] = external_result
+    if not external_payload.get("ok"):
+        result["external_ai"]["fallback"] = True
+        return result
+    subject = external_result.get("subject_group", "")
+    confidence = float(external_result.get("confidence", 0.0) or 0.0)
+    subject_candidates = list(result.get("subject_candidates", []))
+    for item in external_result.get("subject_candidates", []):
+        label = item.get("label", "")
+        if not label:
+            continue
+        existing = next((row for row in subject_candidates if row.get("subject_group") == label), None)
+        if existing:
+            existing["external_score"] = item.get("confidence", 0.0)
+        else:
+            subject_candidates.append({
+                "subject_group": label,
+                "confidence": item.get("confidence", 0.0),
+                "external_score": item.get("confidence", 0.0),
+                "source": "external",
+            })
+    result["subject_candidates"] = sorted(
+        subject_candidates,
+        key=lambda item: -float(item.get("confidence", item.get("external_score", 0.0)) or 0.0),
+    )[:5]
+    if settings.get("suggestion_only", True):
+        result["external_ai"]["adopted"] = False
+        result["external_ai"]["adopt_blocker"] = "suggestion_only"
+        return result
+    if not subject or confidence < settings["min_confidence"]:
+        result["external_ai"]["adopted"] = False
+        result["external_ai"]["adopt_blocker"] = "external_below_threshold"
+        return result
+    candidates = external_result.get("subject_candidates", [])
+    runner = max(
+        [float(item.get("confidence", 0.0) or 0.0) for item in candidates if item.get("label") != subject]
+        or [0.0]
+    )
+    if confidence - runner < 0.15:
+        result["external_ai"]["adopted"] = False
+        result["external_ai"]["adopt_blocker"] = "external_margin_below_minimum"
+        return result
+    result.update({
+        "status": "subject_matched",
+        "stage": "subject_matched",
+        "subject_group": subject,
+        "confidence": round(confidence, 4),
+        "score": int(round(confidence * 100)),
+        "source": "external",
+        "auto_adopted": True,
+        "auto_adopt_blocker": "",
+        "evidence": list(result.get("evidence", [])) + [
+            f"外部模型建议：{subject}（{confidence:.0%}）"
+        ],
+    })
+    result["external_ai"]["adopted"] = True
+    return result
+
+
+def apply_external_assignment_result(local_result, external_payload, subject_group, assignments,
+                                     cfg=None):
+    result = dict(local_result or {})
+    result["external_ai"] = {
+        key: external_payload.get(key)
+        for key in (
+            "called", "ok", "provider", "model", "elapsed_ms", "trigger",
+            "error_category", "message",
+        ) if key in external_payload
+    }
+    suggestion = external_payload.get("result") or {}
+    result["external_ai"]["suggestion"] = suggestion
+    if not external_payload.get("ok"):
+        result["external_ai"]["fallback"] = True
+        return result
+    valid = {
+        str(item.get("id")): item for item in assignments or []
+        if item.get("active", True)
+        and item.get("id")
+        and str(item.get("subject_group") or item.get("subject") or "").strip() == subject_group
+    }
+    candidates = list(result.get("candidates", []))
+    for item in suggestion.get("assignment_candidates", []):
+        assignment_id = str(item.get("label") or "")
+        if assignment_id not in valid:
+            continue
+        confidence = float(item.get("confidence", 0.0) or 0.0)
+        row = next((entry for entry in candidates if entry.get("assignment_id") == assignment_id), None)
+        if row:
+            row["external_score"] = confidence
+            row["confidence"] = max(float(row.get("confidence", 0.0) or 0.0), confidence)
+            row["score"] = max(int(row.get("score", 0) or 0), int(round(confidence * 100)))
+        else:
+            assignment = valid[assignment_id]
+            candidates.append({
+                "assignment_id": assignment_id,
+                "name": assignment.get("name", ""),
+                "experiment": assignment.get("experiment", ""),
+                "score": int(round(confidence * 100)),
+                "confidence": confidence,
+                "external_score": confidence,
+                "source": "external",
+            })
+    candidates.sort(key=lambda item: -int(item.get("score", 0) or 0))
+    result["candidates"] = candidates[:3]
+    assignment_id = str(suggestion.get("assignment_id") or "")
+    confidence = float(suggestion.get("confidence", 0.0) or 0.0)
+    settings = external_ai_settings(cfg)
+    if settings.get("suggestion_only", True):
+        result["external_ai"].update({"adopted": False, "adopt_blocker": "suggestion_only"})
+        return result
+    if assignment_id not in valid or confidence < settings["min_confidence"]:
+        result["external_ai"].update({
+            "adopted": False, "adopt_blocker": "external_below_threshold",
+        })
+        return result
+    runner = max(
+        [
+            float(item.get("confidence", 0.0) or 0.0)
+            for item in suggestion.get("assignment_candidates", [])
+            if item.get("label") != assignment_id
+        ] or [0.0]
+    )
+    if confidence - runner < 0.15:
+        result["external_ai"].update({
+            "adopted": False, "adopt_blocker": "external_margin_below_minimum",
+        })
+        return result
+    assignment = valid[assignment_id]
+    result.update({
+        "status": "matched",
+        "assignment_id": assignment_id,
+        "score": int(round(confidence * 100)),
+        "candidate_margin": round(confidence - runner, 4),
+        "auto_adopted": True,
+        "auto_adopt_blocker": "",
+        "evidence": list(result.get("evidence", [])) + [
+            f"外部模型建议作业：{assignment.get('name') or assignment.get('experiment')}（{confidence:.0%}）"
+        ],
+    })
+    result["external_ai"]["adopted"] = True
+    return result
+
+
 def import_ai_rule_pack(data, cfg=None):
     """Validate/import a professional pack and switch semester scope safely."""
     if not HAS_AI_CLASSIFIER:
@@ -1648,7 +2042,7 @@ def preview_ai_examples(source, data, cfg=None):
                 subject = str(subject_candidates[0].get("subject_group") or "")
         if subject and not assignment_id:
             assignment_result = classify_assignment_in_subject(
-                raw_name, subject, assignments, cfg
+                raw_name, subject, assignments, cfg, allow_external=False
             )
             assignment_candidates = assignment_result.get("candidates", [])
             assignment_id = assignment_result.get("assignment_id", "")
@@ -2101,6 +2495,9 @@ def ai_brain_payload():
         "rejected": list(reversed(feedback.get("rejected", [])[-20:])),
         "assignments": assignments,
         "model": model_status,
+        "external": external_ai_status(cfg) if external_ai else {
+            "available": False, "enabled": False,
+        },
         "context": {
             "class_name": context.get("class_name", ""),
             "class_aliases": context.get("class_aliases", []),
@@ -2151,6 +2548,9 @@ def default_config():
             "priority": "rules_first",
             "auto_train": True,
             "class_aliases": [],
+        },
+        "ai_external": dict(external_ai.DEFAULT_SETTINGS) if external_ai else {
+            "enabled": False,
         },
     }
 
@@ -2472,6 +2872,13 @@ def _clean_config_paths(cfg):
         cfg["preview_conversion_timeout"] = max(15, min(int(cfg.get("preview_conversion_timeout", 45)), 120))
     except (TypeError, ValueError):
         cfg["preview_conversion_timeout"] = 45
+    if external_ai:
+        try:
+            cfg["ai_external"] = external_ai.normalize_settings(cfg.get("ai_external"))
+        except ValueError:
+            cfg["ai_external"] = external_ai.normalize_settings({"enabled": False})
+    else:
+        cfg["ai_external"] = {"enabled": False}
     return cfg
 
 def _safe_resolve_path(path_value):
@@ -3089,7 +3496,8 @@ def match_file_to_assignment(filename, assignments):
 PENDING_ARCHIVE_BUCKET = "pending_archive"
 _GENERIC_SUBJECT_GROUPS = {"课程作业", "课程报告", "项目作业", "课程论文", "实验报告", "课程设计", "小组作业"}
 
-def classify_file_subject(file_info, assignments, cfg=None, source_kind="wechat"):
+def classify_file_subject(file_info, assignments, cfg=None, source_kind="wechat",
+                          allow_external=True):
     """Stage one: identify a subject without using WeChat directory names."""
     cfg = cfg or load_config_raw()
     filename = str((file_info or {}).get("name", ""))
@@ -3127,6 +3535,19 @@ def classify_file_subject(file_info, assignments, cfg=None, source_kind="wechat"
                 priority=settings.get("priority", "rules_first"),
             )
             if result.get("status") in ("subject_matched", "subject_conflict", "subject_suggested"):
+                ext_settings = external_ai_settings(cfg)
+                call, trigger = (
+                    should_call_external_ai(result, ext_settings)
+                    if allow_external else (False, "external_suppressed")
+                )
+                if call:
+                    result = apply_external_ai_result(
+                        result,
+                        call_external_ai(filename, cfg, rules, assignments, trigger),
+                        cfg,
+                    )
+                else:
+                    result["external_ai"] = {"called": False, "trigger": trigger}
                 return result
         except Exception as exc:
             print(f"[WARN] 分类大脑规则失败，使用原有规则：{exc}")
@@ -3166,10 +3587,25 @@ def classify_file_subject(file_info, assignments, cfg=None, source_kind="wechat"
                         "evidence": [f"公示目录命中科目：{rel.parts[0]}"]}
         except (OSError, ValueError):
             pass
-    return {"status": "unmatched", "subject_group": "", "score": 0,
-            "evidence": ["未识别到科目"]}
+    result = {"status": "unmatched", "subject_group": "", "score": 0,
+              "evidence": ["未识别到科目"]}
+    if external_ai and settings.get("mode") != "off":
+        ext_settings = external_ai_settings(cfg)
+        call, trigger = (
+            should_call_external_ai(result, ext_settings)
+            if allow_external else (False, "external_suppressed")
+        )
+        if call:
+            return apply_external_ai_result(
+                result,
+                call_external_ai(filename, cfg, load_ai_rules(), assignments, trigger),
+                cfg,
+            )
+        result["external_ai"] = {"called": False, "trigger": trigger}
+    return result
 
-def classify_assignment_in_subject(filename, subject_group, assignments, cfg=None):
+def classify_assignment_in_subject(filename, subject_group, assignments, cfg=None,
+                                   allow_external=True, external_payload=None):
     """Stage two: compare only assignments in the confirmed subject."""
     cfg = cfg or load_config_raw()
     rules = load_ai_rules()
@@ -3304,10 +3740,39 @@ def classify_assignment_in_subject(filename, subject_group, assignments, cfg=Non
         reason = "作业候选分数接近，等待确认"
     else:
         reason = "未发现明确作业信息"
-    return {"status": "assignment_pending", "assignment_id": "", "score": best["score"] if best else 0,
-            "candidates": candidates[:3], "candidate_margin": margin / 100 if best else 0.0,
-            "auto_adopted": False, "auto_adopt_blocker": blocker,
-            "evidence": [reason]}
+    result = {"status": "assignment_pending", "assignment_id": "", "score": best["score"] if best else 0,
+              "candidates": candidates[:3], "candidate_margin": margin / 100 if best else 0.0,
+              "auto_adopted": False, "auto_adopt_blocker": blocker,
+              "evidence": [reason]}
+    settings = ai_settings(cfg)
+    if allow_external and external_ai and settings.get("mode") != "off":
+        if external_payload and external_payload.get("suggestion"):
+            reuse_payload = {
+                **external_payload,
+                "ok": external_payload.get("ok", True),
+                "result": external_payload.get("suggestion", {}),
+            }
+            result = apply_external_assignment_result(
+                result,
+                reuse_payload,
+                subject_group,
+                assignments,
+                cfg,
+            )
+        else:
+            ext_settings = external_ai_settings(cfg)
+            call, trigger = should_call_external_ai(result, ext_settings)
+            if call:
+                result = apply_external_assignment_result(
+                    result,
+                    call_external_ai(filename, cfg, rules, assignments, trigger),
+                    subject_group,
+                    assignments,
+                    cfg,
+                )
+            else:
+                result["external_ai"] = {"called": False, "trigger": trigger}
+    return result
 
 def _can_archive_record(record):
     return record.get("status") in ("matched", "manual_matched") and bool(record.get("assignment_id"))
@@ -3911,10 +4376,22 @@ def scan_existing_directory(base_path, filename_student=False):
             pass
 
         if not assignment_id:
-            subject_result = classify_file_subject({"path": str(f), "name": f.name}, assignments, cfg,
-                                                   source_kind="public_backfill" if filename_student else "manual")
+            subject_result = classify_file_subject(
+                {"path": str(f), "name": f.name},
+                assignments,
+                cfg,
+                source_kind="public_backfill" if filename_student else "manual",
+                allow_external=False,
+            )
             if subject_result.get("status") == "subject_matched":
-                assignment_result = classify_assignment_in_subject(f.name, subject_result.get("subject_group", ""), assignments)
+                assignment_result = classify_assignment_in_subject(
+                    f.name,
+                    subject_result.get("subject_group", ""),
+                    assignments,
+                    cfg,
+                    allow_external=False,
+                    external_payload=subject_result.get("external_ai"),
+                )
                 assignment_id = assignment_result.get("assignment_id", "")
             else:
                 assignment_result = {"status": subject_result.get("status", "unmatched"), "score": 0,
@@ -3994,6 +4471,7 @@ def scan_existing_directory(base_path, filename_student=False):
                                "subject_score": subject_result.get("score", 0), "assignment_id": assignment_id,
                                "assignment_score": assignment_result.get("score", 0),
                                "candidates": assignment_result.get("candidates", []),
+                               "external_ai": assignment_result.get("external_ai") or subject_result.get("external_ai", {}),
                                "evidence": subject_result.get("evidence", []) + assignment_result.get("evidence", []),
                                "source_kind": "public_backfill" if filename_student else "manual"},
         }
@@ -4525,7 +5003,13 @@ def process_new_file(file_info, students, assignments, submissions):
     subject_result = classify_file_subject(file_info, assignments, cfg, source_kind="wechat")
     subject_group = subject_result.get("subject_group", "")
     if subject_result.get("status") == "subject_matched":
-        assignment_result = classify_assignment_in_subject(filename, subject_group, assignments)
+        assignment_result = classify_assignment_in_subject(
+            filename,
+            subject_group,
+            assignments,
+            cfg,
+            external_payload=subject_result.get("external_ai"),
+        )
     else:
         assignment_result = {"status": subject_result.get("status", "unmatched"), "assignment_id": "",
                              "score": 0, "candidates": [], "evidence": subject_result.get("evidence", [])}
@@ -4538,6 +5022,7 @@ def process_new_file(file_info, students, assignments, submissions):
         "confidence": subject_result.get("confidence", subject_result.get("score", 0) / 100),
         "source": subject_result.get("source", "legacy_rules"),
         "subject_candidates": subject_result.get("subject_candidates", []),
+        "external_ai": assignment_result.get("external_ai") or subject_result.get("external_ai", {}),
         "assignment_id": assignment_id, "assignment_score": assignment_result.get("score", 0),
         "candidates": assignment_result.get("candidates", []),
         "evidence": list(subject_result.get("evidence", [])) + list(assignment_result.get("evidence", [])),
@@ -4933,6 +5418,22 @@ class APIHandler(SimpleHTTPRequestHandler):
 
         elif path == "/api/ai/brain":
             self._json(ai_brain_payload())
+
+        elif path in ("/api/ai/external/settings", "/api/ai/external/status"):
+            settings = public_external_ai_settings()
+            if not self._request_is_local():
+                settings["key_masked"] = ""
+            self._json({
+                "ok": True,
+                "settings": settings,
+                "status": external_ai_status(),
+            })
+
+        elif path == "/api/ai/external/history":
+            self._json({
+                "ok": True,
+                "items": list(reversed(load_external_ai_history()[-50:])),
+            })
 
         elif path == "/api/ai/model/status":
             self._json({"ok": True, "model": ai_model_status()})
@@ -5491,6 +5992,91 @@ class APIHandler(SimpleHTTPRequestHandler):
                 "model": ai_model_status(cfg),
             })
 
+        elif path == "/api/ai/external/settings":
+            if not self._request_is_local():
+                self._json({"ok": False, "msg": "外部模型凭据只能在运行服务的电脑上修改"}, status=403)
+                return
+            if not external_ai:
+                self._json({"ok": False, "msg": "外部增强模块不可用"}, status=503)
+                return
+            cfg = load_config_raw()
+            try:
+                settings = external_ai.normalize_settings(data)
+            except ValueError as exc:
+                self._json({"ok": False, "msg": str(exc)})
+                return
+            api_key = data.get("api_key")
+            clear_key = data.get("clear_key") is True
+            current_key = str(load_external_ai_secrets().get("api_key") or "")
+            next_key = "" if clear_key else (
+                str(api_key).strip()[:1000]
+                if api_key is not None and str(api_key).strip()
+                else current_key
+            )
+            if settings["enabled"] and settings["provider"] == "openai_compatible":
+                if not next_key:
+                    self._json({"ok": False, "msg": "启用云端 API 前需要配置 API Key"})
+                    return
+            if next_key != current_key:
+                save_external_ai_secret(next_key)
+            cfg["ai_external"] = settings
+            save_config(cfg)
+            self._json({
+                "ok": True,
+                "settings": public_external_ai_settings(cfg),
+                "status": external_ai_status(cfg),
+            })
+
+        elif path == "/api/ai/external/test":
+            if not self._request_is_local():
+                self._json({"ok": False, "msg": "只能在运行服务的电脑上测试外部模型"}, status=403)
+                return
+            if not external_ai:
+                self._json({"ok": False, "msg": "外部增强模块不可用"}, status=503)
+                return
+            cfg = load_config_raw()
+            rules = load_ai_rules()
+            filename = str(data.get("file_name") or "分类连接测试.docx").strip()[:500]
+            payload = call_external_ai(
+                filename,
+                cfg,
+                rules,
+                cfg.get("assignments", []),
+                "connection_test",
+            )
+            self._json({
+                "ok": bool(payload.get("ok")),
+                "result": payload,
+                "status": external_ai_status(cfg),
+                "privacy_preview": external_ai_context(
+                    filename, cfg, rules, cfg.get("assignments", [])
+                ),
+                "msg": payload.get("message", "连接测试完成"),
+            })
+
+        elif path == "/api/ai/external/classify":
+            if not self._request_is_local():
+                self._json({"ok": False, "msg": "只能在运行服务的电脑上手动调用外部模型"}, status=403)
+                return
+            if not external_ai:
+                self._json({"ok": False, "msg": "外部增强模块不可用"}, status=503)
+                return
+            filename = str(data.get("file_name") or data.get("filename") or "").strip()[:500]
+            if not filename:
+                self._json({"ok": False, "msg": "缺少文件名"})
+                return
+            cfg = load_config_raw()
+            rules = load_ai_rules()
+            payload = call_external_ai(
+                filename, cfg, rules, cfg.get("assignments", []), "manual_request"
+            )
+            self._json({
+                "ok": bool(payload.get("ok")),
+                "result": payload,
+                "status": external_ai_status(cfg),
+                "msg": payload.get("message", "外部识别完成"),
+            })
+
         elif path == "/api/ai/context":
             cfg = load_config_raw()
             class_name = str(data.get("class_name", cfg.get("class_name", ""))).strip()[:80]
@@ -5704,6 +6290,20 @@ class APIHandler(SimpleHTTPRequestHandler):
                 model_bundle=usable_ai_model_bundle() if settings.get("mode") == "local_model" else {},
                 priority=settings.get("priority", "rules_first"),
             )
+            ext_settings = external_ai_settings(cfg)
+            call, trigger = (
+                should_call_external_ai(result, ext_settings)
+                if settings.get("mode") != "off"
+                else (False, "classifier_disabled")
+            )
+            if call:
+                result = apply_external_ai_result(
+                    result,
+                    call_external_ai(filename, cfg, rules, assignments, trigger),
+                    cfg,
+                )
+            else:
+                result["external_ai"] = {"called": False, "trigger": trigger}
             assignment_result = {"status": "assignment_pending", "assignment_id": "", "score": 0,
                                  "candidates": [], "evidence": []}
             if result.get("status") == "subject_matched":
@@ -5712,6 +6312,7 @@ class APIHandler(SimpleHTTPRequestHandler):
                     result.get("subject_group", ""),
                     assignments,
                     cfg,
+                    external_payload=result.get("external_ai"),
                 )
             payload = {
                 **result,
@@ -5789,7 +6390,13 @@ class APIHandler(SimpleHTTPRequestHandler):
                 self._json({"ok": False, "msg": "未找到待归档文件"})
                 return
             old_subject = found.get("subject_group", "")
-            result = classify_assignment_in_subject((found.get("file") or {}).get("name", ""), subject_group, assignments)
+            result = classify_assignment_in_subject(
+                (found.get("file") or {}).get("name", ""),
+                subject_group,
+                assignments,
+                cfg,
+                allow_external=False,
+            )
             found["subject_group"] = subject_group
             found["assignment_id"] = ""
             found["assignment_name"] = "待确认"
@@ -6918,6 +7525,7 @@ class APIHandler(SimpleHTTPRequestHandler):
         package_files = [
             "server.py",
             "ai_classifier.py",
+            "external_ai.py",
             "classifier_features.py",
             "classifier_trainer.py",
             "dashboard.html",
@@ -7119,7 +7727,7 @@ class APIHandler(SimpleHTTPRequestHandler):
         try:
             # 备份当前关键文件
             backup_entries = []
-            for item in ["server.py", "ai_classifier.py", "classifier_features.py", "classifier_trainer.py", "dashboard.html", "dashboard_modern.html", "pack.py", "repair_update.py", "repair_update.bat", "CHANGELOG.md", "announcement.json", "manifest.json", "启动作业追踪器.bat", "更新修复工具.bat"]:
+            for item in ["server.py", "ai_classifier.py", "external_ai.py", "classifier_features.py", "classifier_trainer.py", "dashboard.html", "dashboard_modern.html", "pack.py", "repair_update.py", "repair_update.bat", "CHANGELOG.md", "announcement.json", "manifest.json", "启动作业追踪器.bat", "更新修复工具.bat"]:
                 fp = BASE_DIR / item
                 if fp.exists():
                     backup_entries.append((str(fp), item))
