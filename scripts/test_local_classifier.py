@@ -15,6 +15,7 @@ import installer
 import pack
 import server
 from scripts import evaluate_local_classifier
+from scripts import verify_classifier_cold_start
 
 
 class FilenameContextTest(unittest.TestCase):
@@ -328,6 +329,21 @@ class LocalModelTest(unittest.TestCase):
         )
         self.assertEqual(first["training_signature"], second["training_signature"])
 
+    def test_empty_active_scope_excludes_historical_samples(self):
+        summary = classifier_trainer.summarize_training_data(
+            [{
+                "raw_name": "旧课程报告.docx",
+                "normalized_text": "旧课程报告",
+                "subject_group": "旧课程",
+                "count": 3,
+            }],
+            [],
+            set(),
+        )
+        self.assertEqual(summary["confirmation_count"], 0)
+        self.assertEqual(summary["all_confirmation_count"], 3)
+        self.assertEqual(summary["course"]["pattern_count"], 0)
+
     def test_course_and_assignment_models_train_and_reload(self):
         rows = training_examples()
         assignments = training_assignments()
@@ -552,6 +568,22 @@ class LocalModelTest(unittest.TestCase):
 
 
 class ServerTrainingIntegrationTest(unittest.TestCase):
+    def test_isolated_cold_start_workflow_reaches_ready_model(self):
+        result = verify_classifier_cold_start.run_verification()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["cold_start_stage"], "model_ready")
+        self.assertEqual(result["patterns"], 10)
+        self.assertEqual(
+            set(result["checkpoints"]),
+            {
+                "semester_scope",
+                "rules_without_samples",
+                "first_confirmation_memory",
+                "automatic_training",
+                "model_inference",
+            },
+        )
+
     def test_feedback_samples_train_in_background(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -67,6 +67,13 @@ class AIClassifierTest(unittest.TestCase):
         with self.assertRaises(ai_classifier.RulePackError):
             ai_classifier.normalize_rule_pack(rules(), allowed_subjects=["数字电子技术"])
 
+    def test_inactive_course_alias_does_not_block_active_course(self):
+        payload = rules()
+        payload["subjects"]["数字电子技术"]["active"] = False
+        payload["subjects"]["自动控制原理"]["confirmed_aliases"].append("数电")
+        normalized = ai_classifier.normalize_rule_pack(payload)
+        self.assertEqual(normalized["collisions"], [])
+
     def test_keyword_extraction_removes_student_name(self):
         items = ai_classifier.extract_keyword_candidates(
             "嵌入式系统设计",

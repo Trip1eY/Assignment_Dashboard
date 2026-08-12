@@ -148,14 +148,14 @@ def example_weight(item):
 def aggregate_training_examples(examples, label_field, subject_group="", eligible_labels=None,
                                 feature_cache=None):
     """Collapse repeated confirmations and exclude contradictory patterns."""
-    eligible = set(eligible_labels or [])
+    eligible = None if eligible_labels is None else set(eligible_labels)
     by_fingerprint = defaultdict(list)
     confirmation_count = 0
     for source in examples or []:
         if subject_group and source.get("subject_group") != subject_group:
             continue
         label = str(source.get(label_field) or "").strip()
-        if not label or (eligible and label not in eligible):
+        if not label or (eligible is not None and label not in eligible):
             continue
         fingerprint = example_fingerprint(source)
         if not fingerprint:
@@ -435,7 +435,7 @@ def _softmax(values, temperature=DEFAULT_TEMPERATURE):
 
 
 def _train_complement_nb_rows(rows, label_field, eligible_labels=None, cancel_event=None):
-    eligible = set(eligible_labels or [])
+    eligible = None if eligible_labels is None else set(eligible_labels)
     label_docs = Counter()
     label_feature_counts = defaultdict(Counter)
     global_counts = Counter()
@@ -443,7 +443,7 @@ def _train_complement_nb_rows(rows, label_field, eligible_labels=None, cancel_ev
         if cancel_event and cancel_event.is_set():
             raise InterruptedError("训练已取消")
         label = str(item.get(label_field) or "").strip()
-        if not label or (eligible and label not in eligible):
+        if not label or (eligible is not None and label not in eligible):
             continue
         features = item.get("_features") or extract_features(
             item.get("normalized_text", ""),
@@ -642,13 +642,18 @@ def _validation_result(examples, label_field, eligible_labels, cancel_event=None
 
 def summarize_training_data(examples, assignments, active_subjects):
     examples = list(examples or [])
-    active_subjects = set(active_subjects or [])
-    if not active_subjects:
+    if active_subjects is None:
         active_subjects = {
             str(item.get("subject_group") or "").strip()
             for item in examples
             if str(item.get("subject_group") or "").strip()
         }
+    else:
+        active_subjects = set(active_subjects)
+    active_examples = [
+        item for item in examples
+        if str(item.get("subject_group") or "").strip() in active_subjects
+    ]
     feature_cache = {}
     course = aggregate_training_examples(
         examples,
@@ -715,8 +720,10 @@ def summarize_training_data(examples, assignments, active_subjects):
         json.dumps(signature_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     return {
-        "sample_record_count": len(examples),
-        "confirmation_count": sum(example_confirmation_count(item) for item in examples),
+        "sample_record_count": len(active_examples),
+        "confirmation_count": sum(example_confirmation_count(item) for item in active_examples),
+        "all_sample_record_count": len(examples),
+        "all_confirmation_count": sum(example_confirmation_count(item) for item in examples),
         "course": course,
         "assignment": assignment,
         "training_signature": training_signature,

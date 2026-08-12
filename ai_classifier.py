@@ -134,15 +134,17 @@ def normalize_rule_pack(payload, allowed_subjects=None):
         assignment_types = _clean_list(raw_data.get("assignment_types", []))
         confirmed = [item for item in confirmed if item != name]
         suggested = [item for item in suggested if item != name and item not in confirmed]
-        for alias in [name] + confirmed:
-            key = alias.casefold()
-            owner = alias_owners.get(key)
-            if owner and owner != name:
-                collisions.append({"alias": alias, "subjects": [owner, name]})
-            else:
-                alias_owners[key] = name
+        active = bool(raw_data.get("active", True))
+        if active:
+            for alias in [name] + confirmed:
+                key = alias.casefold()
+                owner = alias_owners.get(key)
+                if owner and owner != name:
+                    collisions.append({"alias": alias, "subjects": [owner, name]})
+                else:
+                    alias_owners[key] = name
         subjects[name] = {
-            "active": bool(raw_data.get("active", True)),
+            "active": active,
             "confirmed_aliases": confirmed,
             "suggested_aliases": suggested,
             "keywords": keywords,
@@ -290,7 +292,13 @@ def _rules_classify_subject(filename, assignments=None, rules=None, feedback=Non
             protected_terms=protected_terms,
         )
         subject = _clean_text(item.get("to_subject"), 80)
-        if len(token) >= 2 and subject and token in clean:
+        subject_data = registry.get(subject) or {}
+        if (
+            len(token) >= 2
+            and subject
+            and subject_data.get("active", False)
+            and token in clean
+        ):
             feedback_hits.append(subject)
     if feedback_hits:
         subject = feedback_hits[0]

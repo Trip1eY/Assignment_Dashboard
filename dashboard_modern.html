@@ -6053,6 +6053,7 @@
                 </div>
                 <div class="brain-training-progress"><div id="brain-model-progress-bar"></div></div>
                 <div class="row-sub" id="brain-model-progress-text">尚未训练</div>
+                <div class="card-foot" id="brain-cold-start-status">专业包规则已就绪，确认样本为可选增强。</div>
                 <div class="file-actions"><button class="primary" id="brain-model-train" onclick="trainBrainModel()">训练模型</button><button id="brain-model-cancel" onclick="cancelBrainTraining()" disabled>取消</button><button class="danger" onclick="resetBrainModel()">重置模型</button></div>
                 <div class="card-foot" id="brain-model-validation">验证样本不足时不会显示准确率。</div>
               </section>
@@ -9261,13 +9262,15 @@ async function confirmBrainImport() {
   if (button) { button.disabled = true; button.textContent = '合并中...'; }
   if (status) status.textContent = '正在校验并写入专业包，请稍候...';
   try {
-    const resp = await apiPost('/api/ai/rules/import', { rule_pack: state.aiImportPreview, preview: false, mode: 'merge', allowed_subjects: brainCourseNamesFromForm() });
+    const resp = await apiPost('/api/ai/rules/import', { rule_pack: state.aiImportPreview, preview: false, mode: 'merge', activate_semester: true, allowed_subjects: brainCourseNamesFromForm() });
     state.aiRules = resp.rule_pack;
     state.aiImportPreview = null;
     const summary = resp.summary || {};
     const preview = document.getElementById('brain-import-preview');
     if (preview) preview.innerHTML = `<strong>合并成功</strong><br>${summary.subjects || 0} 门课程 · ${summary.confirmed_aliases || 0} 个确认别名 · ${summary.suggested_aliases || 0} 个待确认别名 · ${summary.keywords || 0} 个关键词`;
-    if (status) status.textContent = '专业包已成功合并并保存到本机规则。';
+    if (status) status.textContent = resp.semester_switched
+      ? `专业包已合并，并切换到 ${resp.settings?.active_semester || '新学期'} 的课程范围。`
+      : '专业包已成功合并并保存到本机规则。';
     toast('专业包已合并');
     try { await refreshClassificationBrain(); } catch (refreshError) { console.warn('分类大脑刷新失败，但专业包已保存', refreshError); }
   } catch (error) {
@@ -9333,6 +9336,17 @@ function renderBrainLearning() {
     validation.textContent = model.validation?.status === 'ready'
       ? `独立模式留出验证：${Math.round(Number(model.validation.accuracy || 0) * 100)}% · ${model.validation.patterns || model.validation.samples || 0} 种 · ${model.validation.split_strategy === 'fingerprint_stratified_hash' ? '无重复泄漏' : '分组验证'}`
       : '验证样本不足，暂不展示准确率。';
+  }
+  const coldStart = model.cold_start || {};
+  const coldStartStatus = document.getElementById('brain-cold-start-status');
+  if (coldStartStatus) {
+    coldStartStatus.textContent = ({
+      unconfigured: '等待配置本学期课程',
+      rules_ready: `规则冷启动已就绪 · ${coldStart.active_subjects || 0} 门当前课程`,
+      memory_learning: `记忆增强已生效 · 已覆盖 ${coldStart.covered_subjects || 0}/${coldStart.active_subjects || 0} 门课程`,
+      trainable: '独立模式已达到门槛，正在等待或可以立即训练本地模型',
+      model_ready: `本地模型冷启动完成 · 已覆盖 ${coldStart.covered_subjects || 0}/${coldStart.active_subjects || 0} 门课程`
+    })[coldStart.stage] || '专业包规则已就绪，确认样本为可选增强。';
   }
   const trainButton = document.getElementById('brain-model-train');
   const cancelButton = document.getElementById('brain-model-cancel');

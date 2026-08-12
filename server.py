@@ -92,6 +92,7 @@ WATCHER_STATE_FILE = DATA_DIR / "watcher_state.json"
 AI_RULES_PATH = DATA_DIR / "ai_rules.json"
 AI_EXAMPLES_PATH = DATA_DIR / "ai_examples.json"
 AI_MODELS_DIR = DATA_DIR / "models"
+AI_AUTO_TRAIN_DELAY_SECONDS = 30.0
 
 _ai_training_lock = threading.RLock()
 _ai_training_cancel = threading.Event()
@@ -923,12 +924,81 @@ def save_ai_rules(payload):
     return ai_classifier.save_rule_pack(AI_RULES_PATH, payload)
 
 
+def import_ai_rule_pack(data, cfg=None):
+    """Validate/import a professional pack and switch semester scope safely."""
+    if not HAS_AI_CLASSIFIER:
+        raise RuntimeError("分类大脑模块不可用")
+    data = dict(data or {})
+    payload = data.get("rule_pack", data.get("payload", {}))
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"JSON 解析失败：{exc.msg}") from exc
+    normalized = ai_classifier.normalize_rule_pack(
+        payload,
+        data.get("allowed_subjects"),
+    )
+    if data.get("preview", True):
+        return {"ok": True, **normalized}
+    if normalized.get("collisions"):
+        return {
+            "ok": False,
+            "msg": "存在课程别名冲突，请调整后再导入",
+            "collisions": normalized["collisions"],
+        }
+
+    cfg = cfg or load_config_raw()
+    current = load_ai_rules()
+    incoming = normalized["rule_pack"]
+    import_mode = str(data.get("mode", "merge")).strip()
+    incoming_semester = str((incoming.get("profile") or {}).get("semester") or "").strip()
+    current_semester = str(
+        ai_settings(cfg).get("active_semester")
+        or (current.get("profile") or {}).get("semester")
+        or ""
+    ).strip()
+    switch_semester = bool(
+        data.get("activate_semester", True)
+        and incoming_semester
+        and incoming_semester != current_semester
+    )
+
+    if import_mode == "replace":
+        rules = incoming
+    else:
+        if switch_semester:
+            current = json.loads(json.dumps(current, ensure_ascii=False))
+            for item in current.get("subjects", {}).values():
+                item["active"] = False
+        rules = ai_classifier.merge_rule_packs(current, incoming)
+    rules = save_ai_rules(rules)
+
+    settings = ai_settings(cfg)
+    if incoming_semester and data.get("activate_semester", True):
+        settings["active_semester"] = incoming_semester
+        cfg["ai_classifier"] = settings
+        save_config(cfg)
+    schedule_ai_auto_train(cfg)
+    return {
+        "ok": True,
+        "rule_pack": rules,
+        "summary": normalized["summary"],
+        "settings": ai_settings(cfg),
+        "semester_switched": switch_semester,
+        "active_subjects": sorted(_active_ai_subjects(cfg, rules)),
+        "model": ai_model_status(cfg, rules),
+    }
+
+
 def ai_filename_context(cfg=None, rules=None):
     cfg = cfg or load_config_raw()
     settings = ai_settings(cfg)
     rules = rules or load_ai_rules()
     protected = []
     for subject, item in (rules.get("subjects", {}) or {}).items():
+        if not item.get("active", True):
+            continue
         protected.append(subject)
         protected.extend(item.get("confirmed_aliases", []))
         protected.extend(item.get("keywords", []))
@@ -1004,13 +1074,22 @@ def usable_ai_model_bundle(cfg=None, rules=None, examples_payload=None):
 def _active_ai_subjects(cfg=None, rules=None):
     cfg = cfg or load_config_raw()
     rules = rules or load_ai_rules()
+    rule_subjects = rules.get("subjects", {}) or {}
     subjects = {
         name for name, item in (rules.get("subjects", {}) or {}).items()
         if item.get("active", True)
     }
     for assignment in cfg.get("assignments", []):
+        if not assignment.get("active", True):
+            continue
         subject = str(assignment.get("subject_group") or assignment.get("subject") or "").strip()
-        if subject and subject not in _GENERIC_SUBJECT_GROUPS:
+        # Once a course exists in the rule pack, its active flag is authoritative.
+        # This keeps old-semester assignments from silently reactivating it.
+        if (
+            subject
+            and subject not in _GENERIC_SUBJECT_GROUPS
+            and subject not in rule_subjects
+        ):
             subjects.add(subject)
     return subjects
 
@@ -1204,6 +1283,16 @@ def ai_model_status(cfg=None, rules=None):
     pending_sample_count = max(0, total - trained_total)
     if dataset_stale:
         pending_sample_count = max(1, pending_sample_count)
+    if not active_subjects:
+        cold_start_stage = "unconfigured"
+    elif bundle.get("course_model") and not dataset_stale:
+        cold_start_stage = "model_ready"
+    elif len(trainable_subjects) >= 2:
+        cold_start_stage = "trainable"
+    elif course_summary["trainable_pattern_count"]:
+        cold_start_stage = "memory_learning"
+    else:
+        cold_start_stage = "rules_ready"
     return {
         "state": overall_state,
         "phase": training["phase"],
@@ -1214,6 +1303,11 @@ def ai_model_status(cfg=None, rules=None):
         "sample_count": total,
         "confirmation_count": total,
         "sample_record_count": summary["sample_record_count"],
+        "all_confirmation_count": summary["all_confirmation_count"],
+        "all_sample_record_count": summary["all_sample_record_count"],
+        "inactive_confirmation_count": max(
+            0, summary["all_confirmation_count"] - summary["confirmation_count"]
+        ),
         "pattern_count": course_summary["pattern_count"],
         "trainable_pattern_count": course_summary["trainable_pattern_count"],
         "conflict_pattern_count": course_summary["conflict_pattern_count"],
@@ -1230,6 +1324,18 @@ def ai_model_status(cfg=None, rules=None):
         "data_version": data_version,
         "trained_data_version": trained_data_version,
         "dataset_stale": dataset_stale,
+        "cold_start": {
+            "stage": cold_start_stage,
+            "rules_ready": bool(active_subjects),
+            "memory_ready": bool(course_summary["trainable_pattern_count"]),
+            "model_ready": bool(bundle.get("course_model")) and not dataset_stale,
+            "covered_subjects": sum(
+                1 for subject in active_subjects if current_counts.get(subject, 0)
+            ),
+            "active_subjects": len(active_subjects),
+            "required_subjects": 2,
+            "required_patterns_per_subject": classifier_trainer.COURSE_MIN_PER_LABEL,
+        },
         "validation": ((bundle.get("meta") or {}).get("course_validation") or {
             "status": "insufficient",
             "samples": 0,
@@ -1345,7 +1451,10 @@ def schedule_ai_auto_train(cfg=None):
     with _ai_training_lock:
         if _ai_auto_train_timer:
             _ai_auto_train_timer.cancel()
-        _ai_auto_train_timer = threading.Timer(30.0, start_ai_training)
+        _ai_auto_train_timer = threading.Timer(
+            AI_AUTO_TRAIN_DELAY_SECONDS,
+            start_ai_training,
+        )
         _ai_auto_train_timer.name = "ai-auto-train-delay"
         _ai_auto_train_timer.daemon = True
         _ai_auto_train_timer.start()
@@ -1356,6 +1465,8 @@ def record_ai_example(filename, subject_group, assignment=None,
     if not HAS_AI_CLASSIFIER or not filename or not subject_group:
         return None
     cfg = cfg or load_config_raw()
+    if subject_group not in _active_ai_subjects(cfg):
+        return None
     parsed = inspect_ai_filename(filename, cfg=cfg)
     if not parsed.get("normalized_text"):
         return None
@@ -1375,12 +1486,17 @@ def record_ai_example(filename, subject_group, assignment=None,
 
 def _ai_assignment_indexes(cfg=None):
     cfg = cfg or load_config_raw()
+    subjects = _active_ai_subjects(cfg)
     active = [
         item for item in cfg.get("assignments", [])
-        if item.get("active", True) and item.get("id")
+        if (
+            item.get("active", True)
+            and item.get("id")
+            and str(item.get("subject_group") or item.get("subject") or "").strip()
+            in subjects
+        )
     ]
     by_id = {str(item.get("id")): item for item in active}
-    subjects = _active_ai_subjects(cfg)
     return active, by_id, subjects
 
 
@@ -2979,18 +3095,22 @@ def classify_file_subject(file_info, assignments, cfg=None, source_kind="wechat"
     filename = str((file_info or {}).get("name", ""))
 
     settings = ai_settings(cfg)
+    allowed_subjects = None
     if HAS_AI_CLASSIFIER and settings.get("mode") in ("rules", "local_model"):
         try:
             ensure_ai_examples_migrated(cfg)
             rules = load_ai_rules()
+            active_subjects = _active_ai_subjects(cfg, rules)
+            if rules.get("subjects"):
+                allowed_subjects = set(active_subjects)
             context = ai_filename_context(cfg, rules)
             specific_assignments = [
                 item for item in assignments
-                if str(item.get("subject_group") or item.get("subject") or "").strip() not in _GENERIC_SUBJECT_GROUPS
+                if str(item.get("subject_group") or item.get("subject") or "").strip() in active_subjects
             ]
             specific_synonyms = {
                 name: aliases for name, aliases in _SUBJECT_SYNONYMS.items()
-                if name not in _GENERIC_SUBJECT_GROUPS
+                if name in active_subjects
             }
             result = ai_classifier.classify_subject(
                 filename,
@@ -3012,6 +3132,8 @@ def classify_file_subject(file_info, assignments, cfg=None, source_kind="wechat"
             print(f"[WARN] 分类大脑规则失败，使用原有规则：{exc}")
 
     detected = _detect_subjects_in_filename(filename) - _GENERIC_SUBJECT_GROUPS
+    if allowed_subjects is not None:
+        detected &= allowed_subjects
     if len(detected) > 1:
         return {"status": "subject_conflict", "subject_group": "", "score": 0,
                 "evidence": ["文件名同时命中多个科目"]}
@@ -3023,7 +3145,12 @@ def classify_file_subject(file_info, assignments, cfg=None, source_kind="wechat"
     for item in reversed((cfg.get("match_feedback", {}) or {}).get("subject_corrections", [])):
         token = str(item.get("token", "")).strip().lower()
         subject = str(item.get("to_subject", "")).strip()
-        if len(token) >= 2 and subject and token in filename.lower():
+        if (
+            len(token) >= 2
+            and subject
+            and (allowed_subjects is None or subject in allowed_subjects)
+            and token in filename.lower()
+        ):
             return {"status": "subject_matched", "subject_group": subject, "score": 70,
                     "evidence": [f"人工反馈匹配科目：{subject}"]}
 
@@ -3032,6 +3159,8 @@ def classify_file_subject(file_info, assignments, cfg=None, source_kind="wechat"
         try:
             rel = Path(file_info.get("path", "")).resolve().relative_to(Path(EXPERIMENT_BASE).resolve())
             known = {str(a.get("subject_group", "")).strip() for a in assignments}
+            if allowed_subjects is not None:
+                known &= allowed_subjects
             if rel.parts and rel.parts[0] in known:
                 return {"status": "subject_matched", "subject_group": rel.parts[0], "score": 80,
                         "evidence": [f"公示目录命中科目：{rel.parts[0]}"]}
@@ -3042,6 +3171,19 @@ def classify_file_subject(file_info, assignments, cfg=None, source_kind="wechat"
 
 def classify_assignment_in_subject(filename, subject_group, assignments, cfg=None):
     """Stage two: compare only assignments in the confirmed subject."""
+    cfg = cfg or load_config_raw()
+    rules = load_ai_rules()
+    if rules.get("subjects") and subject_group not in _active_ai_subjects(cfg, rules):
+        return {
+            "status": "assignment_pending",
+            "assignment_id": "",
+            "score": 0,
+            "candidates": [],
+            "candidate_margin": 0.0,
+            "auto_adopted": False,
+            "auto_adopt_blocker": "inactive_semester_subject",
+            "evidence": ["课程未在当前学期启用"],
+        }
     candidates = []
     for assignment in assignments:
         if assignment.get("subject_group", "") != subject_group or not assignment.get("active", True):
@@ -3059,7 +3201,6 @@ def classify_assignment_in_subject(filename, subject_group, assignments, cfg=Non
     exact_conflict = False
     if HAS_AI_CLASSIFIER and settings.get("mode") == "local_model":
         try:
-            cfg = cfg or load_config_raw()
             context = ai_filename_context(cfg)
             learned = ai_classifier.classify_assignment_model(
                 filename,
@@ -5398,26 +5539,8 @@ class APIHandler(SimpleHTTPRequestHandler):
             if not HAS_AI_CLASSIFIER:
                 self._json({"ok": False, "msg": "分类大脑模块不可用"})
                 return
-            payload = data.get("rule_pack", data.get("payload", {}))
-            if isinstance(payload, str):
-                try:
-                    payload = json.loads(payload)
-                except json.JSONDecodeError as exc:
-                    self._json({"ok": False, "msg": f"JSON 解析失败：{exc.msg}"})
-                    return
             try:
-                normalized = ai_classifier.normalize_rule_pack(payload, data.get("allowed_subjects"))
-                if data.get("preview", True):
-                    self._json({"ok": True, **normalized})
-                    return
-                if normalized.get("collisions"):
-                    self._json({"ok": False, "msg": "存在课程别名冲突，请调整后再导入",
-                                "collisions": normalized["collisions"]})
-                    return
-                incoming = normalized["rule_pack"]
-                rules = ai_classifier.merge_rule_packs(load_ai_rules(), incoming) if data.get("mode", "merge") == "merge" else incoming
-                rules = save_ai_rules(rules)
-                self._json({"ok": True, "rule_pack": rules, "summary": normalized["summary"]})
+                self._json(import_ai_rule_pack(data))
             except Exception as exc:
                 self._json({"ok": False, "msg": str(exc)})
 
@@ -5557,14 +5680,22 @@ class APIHandler(SimpleHTTPRequestHandler):
             assignments = cfg.get("assignments", [])
             settings = ai_settings(cfg)
             rules = load_ai_rules()
+            active_subjects = _active_ai_subjects(cfg, rules)
             context = ai_filename_context(cfg, rules)
             ensure_ai_examples_migrated(cfg)
             result = ai_classifier.classify_subject(
                 filename,
-                assignments=[item for item in assignments if str(item.get("subject_group") or item.get("subject") or "") not in _GENERIC_SUBJECT_GROUPS],
+                assignments=[
+                    item for item in assignments
+                    if str(item.get("subject_group") or item.get("subject") or "").strip()
+                    in active_subjects
+                ],
                 rules=rules,
                 feedback=cfg.get("match_feedback", {}),
-                subject_synonyms={name: aliases for name, aliases in _SUBJECT_SYNONYMS.items() if name not in _GENERIC_SUBJECT_GROUPS},
+                subject_synonyms={
+                    name: aliases for name, aliases in _SUBJECT_SYNONYMS.items()
+                    if name in active_subjects
+                },
                 students=load_students(),
                 sensitivity=settings.get("sensitivity", 0.70),
                 class_name=context["class_name"],
