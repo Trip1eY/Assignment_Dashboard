@@ -13,16 +13,20 @@ import zipfile
 import datetime
 import shutil
 
+from app_meta import APP_VERSION
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 打包配置
 PACK_CONFIG = {
     "include_files": [
         "server.py",
+        "app_meta.py",
         "ai_classifier.py",
         "external_ai.py",
         "classifier_features.py",
         "classifier_trainer.py",
+        "installer_core.py",
         "restart_helper.py",
         "dashboard.html",
         "dashboard_modern.html",
@@ -49,14 +53,8 @@ PACK_CONFIG = {
 
 
 def get_version():
-    """从 config.json 读取版本号"""
-    config_path = os.path.join(BASE_DIR, "config.json")
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-        return config.get("version", "1.0.0")
-    except:
-        return "1.0.0"
+    """返回统一应用版本；自定义发布版本请传给打包函数。"""
+    return APP_VERSION
 
 
 def check_announcement():

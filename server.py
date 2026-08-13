@@ -33,6 +33,8 @@ from pathlib import Path
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
+from app_meta import APP_VERSION, UPDATE_REPOSITORY
+
 
 def _configure_utf8_stdio():
     """Keep redirected Windows logs from crashing on Unicode status text."""
@@ -171,8 +173,6 @@ ORGANIZED_DIR = Path(_DEFAULT_CLASS_FOLDER) / "已收作业"
 CONVERT_TEMP_DIR = Path(tempfile.gettempdir()) / "wechat-tracker-convert"
 PREVIEW_CACHE_DIR = DATA_DIR / "preview_cache"  # Word→PDF 预览缓存，持久化到 data/
 _IS_PREVIEW_CONVERTER = "--preview-convert" in sys.argv
-APP_VERSION = "0.1.1"
-UPDATE_REPOSITORY = "Trip1eY/Assignment_Dashboard"
 VERSION_MANIFEST = BASE_DIR / "manifest.json"
 
 
@@ -5123,7 +5123,7 @@ def process_new_file(file_info, students, assignments, submissions):
 # ---------------------------------------------------------------------------
 
 class FileWatcher:
-    def __init__(self):
+    def __init__(self, initialize_files=True):
         self._stop_event = threading.Event()
         self._spinner_idx = 0
 
@@ -5139,18 +5139,19 @@ class FileWatcher:
         self.running = False
         self.thread = None
 
-        # 启动时检查 watch 目录是否存在
-        for d in get_effective_watch_dirs():
-            wpath = Path(d)
-            if not wpath.exists():
-                print(f"{C.RED}[WARN] Watch dir not found: {d}{C.RESET}")
-                print(f"  → Files dropped here will NOT be auto-collected")
-                print(f"  → Common causes: WeChat logged out / directory renamed / drive unmounted")
-            elif not os.access(wpath, os.R_OK):
-                print(f"{C.RED}[WARN] Watch dir permission denied: {d}{C.RESET}")
+        if initialize_files:
+            # 启动时检查 watch 目录是否存在
+            for d in get_effective_watch_dirs():
+                wpath = Path(d)
+                if not wpath.exists():
+                    print(f"{C.RED}[WARN] Watch dir not found: {d}{C.RESET}")
+                    print(f"  → Files dropped here will NOT be auto-collected")
+                    print(f"  → Common causes: WeChat logged out / directory renamed / drive unmounted")
+                elif not os.access(wpath, os.R_OK):
+                    print(f"{C.RED}[WARN] Watch dir permission denied: {d}{C.RESET}")
 
-        # 快速初始化：只记录已有文件到 known_files，不处理
-        self._quick_init()
+            # 快速初始化：只记录已有文件到 known_files，不处理
+            self._quick_init()
 
     # --- 终端动画 ---
 
@@ -7524,10 +7525,12 @@ class APIHandler(SimpleHTTPRequestHandler):
         safe_version = re.sub(r"[^0-9A-Za-z._-]+", "_", version).strip("._-") or "update"
         package_files = [
             "server.py",
+            "app_meta.py",
             "ai_classifier.py",
             "external_ai.py",
             "classifier_features.py",
             "classifier_trainer.py",
+            "installer_core.py",
             "dashboard.html",
             "dashboard_modern.html",
             "restart_helper.py",
@@ -7727,7 +7730,7 @@ class APIHandler(SimpleHTTPRequestHandler):
         try:
             # 备份当前关键文件
             backup_entries = []
-            for item in ["server.py", "ai_classifier.py", "external_ai.py", "classifier_features.py", "classifier_trainer.py", "dashboard.html", "dashboard_modern.html", "pack.py", "repair_update.py", "repair_update.bat", "CHANGELOG.md", "announcement.json", "manifest.json", "启动作业追踪器.bat", "更新修复工具.bat"]:
+            for item in ["server.py", "app_meta.py", "ai_classifier.py", "external_ai.py", "classifier_features.py", "classifier_trainer.py", "installer_core.py", "dashboard.html", "dashboard_modern.html", "pack.py", "repair_update.py", "repair_update.bat", "CHANGELOG.md", "announcement.json", "manifest.json", "启动作业追踪器.bat", "更新修复工具.bat"]:
                 fp = BASE_DIR / item
                 if fp.exists():
                     backup_entries.append((str(fp), item))
@@ -8068,7 +8071,7 @@ def main():
         return
 
     # 初始化文件监控
-    watcher = FileWatcher()
+    watcher = FileWatcher(initialize_files=not args.no_watch)
     if not args.no_watch:
         watcher.start()
 

@@ -1063,7 +1063,10 @@ class SampleWorkbenchServiceTest(unittest.TestCase):
 
 class DistributionManifestTest(unittest.TestCase):
     def test_training_modules_are_shipped_without_runtime_data(self):
-        expected = {"classifier_features.py", "classifier_trainer.py", "external_ai.py"}
+        expected = {
+            "app_meta.py", "classifier_features.py", "classifier_trainer.py",
+            "external_ai.py", "installer_core.py",
+        }
         self.assertTrue(expected.issubset(set(installer.INSTALL_FILES)))
         self.assertTrue(expected.issubset(set(pack.PACK_CONFIG["include_files"])))
         self.assertIn("data", pack.PACK_CONFIG["exclude_patterns"])

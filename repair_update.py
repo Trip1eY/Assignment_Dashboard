@@ -26,8 +26,10 @@ LOG_DIR = BASE_DIR / "logs"
 REQUIRED_FILES = ("server.py", "dashboard.html")
 COMMON_BACKUP_FILES = (
     "server.py",
+    "app_meta.py",
     "dashboard.html",
     "dashboard_modern.html",
+    "installer_core.py",
     "pack.py",
     "repair_update.py",
     "启动作业追踪器.bat",

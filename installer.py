@@ -3,13 +3,12 @@
 """
 作业追踪器 - 图形化安装向导
 维护者: Assignment Dashboard 项目贡献者
-7步安装流程：欢迎→环境检测→班级设置→安装与目录配置→文件类型设置→科目关键词→安装执行
+7步安装流程：欢迎→环境检测→班级与学期→安装与目录→文件类型→分类大脑→安装执行
 """
 
 import os
 import sys
 import json
-import shutil
 import zipfile
 import urllib.request
 import urllib.error
@@ -17,17 +16,18 @@ import tempfile
 import subprocess
 import traceback
 import uuid
+import webbrowser
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from tkinter import ttk, messagebox, filedialog
 import threading
+
+import installer_core
+from app_meta import APP_NAME, APP_VERSION, APP_PORT
 
 # ============================================================
 # 常量配置
 # ============================================================
 
-APP_NAME = "作业追踪器"
-APP_VERSION = "0.1.1"
-APP_PORT = 18765
 AUTHOR = "项目贡献者"
 SUPPORT_URL = "https://github.com/Trip1eY/Assignment_Dashboard/issues/new/choose"
 
@@ -37,18 +37,6 @@ PYTHON_EMBED_SIZE_MB = 8  # 约8MB
 
 # 默认安装目录
 DEFAULT_INSTALL_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "作业追踪器")
-
-# 科目预设
-DEFAULT_SUBJECTS = {
-    "课程报告": ["课程报告", "报告", "学习报告"],
-    "课程论文": ["课程论文", "论文", "期末论文"],
-    "项目作业": ["项目作业", "项目", "小组项目"],
-    "实验报告": ["实验报告", "实验", "实训报告"],
-    "课程设计": ["课程设计", "课设", "设计报告"],
-    "小组作业": ["小组作业", "小组报告", "展示"],
-    "数字电子技术": ["数电", "数字电路", "数字电子技术"],
-    "程序设计": ["C语言", "Python", "编程"]
-}
 
 # 文件类型分组
 FILE_TYPE_GROUPS = {
@@ -60,10 +48,12 @@ FILE_TYPE_GROUPS = {
 # 需要安装到目标目录的文件列表
 INSTALL_FILES = [
     "server.py",
+    "app_meta.py",
     "ai_classifier.py",
     "external_ai.py",
     "classifier_features.py",
     "classifier_trainer.py",
+    "installer_core.py",
     "restart_helper.py",
     "dashboard.html",
     "dashboard_modern.html",
@@ -145,13 +135,22 @@ class InstallerWizard:
         self.scan_dirs = []  # [(显示路径, 绝对路径)]
         self.data_dir = ""
         self.file_types = [".pdf", ".docx", ".doc"]
-        self.subjects = dict(DEFAULT_SUBJECTS)  # 深拷贝
         self.create_desktop_bat = True
+        self.install_mode = "auto"
+        self.detected_mode = "new"
+        self.active_semester = ""
+        self.class_aliases = []
+        self.course_names = []
+        self.imported_rule_pack = None
+        self.pack_profile = {"name": "", "school": "", "major": "", "grade": "", "semester": ""}
+        self.apply_rules_on_upgrade = False
+        self.open_brain_after_install = True
         
         # 进度
         self.progress_var = tk.DoubleVar(value=0)
         self.progress_text = tk.StringVar(value="")
         self.install_log = []
+        self.install_succeeded = False
         
         # 构建界面
         self._build_ui()
@@ -185,7 +184,7 @@ class InstallerWizard:
         self.step_frame.pack(fill=tk.X, padx=20, pady=(12, 0))
         
         self.step_labels = []
-        self.step_names = ["欢迎", "环境检测", "班级设置", "安装与目录", "文件类型", "科目关键词", "执行安装"]
+        self.step_names = ["欢迎", "环境检测", "班级与学期", "安装与目录", "文件类型", "分类大脑", "执行安装"]
         
         for i, name in enumerate(self.step_names):
             lbl = tk.Label(
@@ -254,7 +253,7 @@ class InstallerWizard:
         self._update_step_indicator()
         
         # 更新按钮状态
-        if step == 0:
+        if step in (0, 6):
             self.btn_back.configure(state=tk.DISABLED)
         else:
             self.btn_back.configure(state=tk.NORMAL)
@@ -279,14 +278,76 @@ class InstallerWizard:
     def _next_step(self):
         """下一步"""
         if self.step < 6:
+            if not self._capture_current_step():
+                return
             # 如果即将进入环境检测页，先显示加载提示
             if self.step + 1 == 1:
                 self._show_loading("正在检测系统环境...")
                 self.root.after(100, lambda: self._show_step(self.step + 1))
+            elif self.detected_mode == "repair" and self.step == 1:
+                self._show_step(6)
             else:
                 self._show_step(self.step + 1)
         else:
             self.root.quit()
+
+    def _capture_current_step(self):
+        """Persist page values before Tk widgets are destroyed."""
+        try:
+            if self.step == 0 and hasattr(self, "install_mode_var"):
+                self.install_mode = self.install_mode_var.get() or "auto"
+                self.install_dir = self._ensure_safe_install_dir(
+                    self.welcome_install_dir_entry.get().strip() or DEFAULT_INSTALL_DIR
+                )
+                self.detected_mode = installer_core.detect_install_mode(
+                    self.install_dir, self.install_mode
+                )
+                self._load_existing_install_context(self.install_dir)
+            elif self.step == 2:
+                self.class_name = self.class_entry.get().strip() or "课程班级"
+                self.active_semester = self.semester_entry.get().strip()[:100]
+                self.class_aliases = installer_core._clean_list(
+                    self.class_aliases_entry.get(), 30, 80
+                )
+            elif self.step == 3:
+                self.install_dir = self._ensure_safe_install_dir(
+                    self.install_dir_entry.get().strip() or DEFAULT_INSTALL_DIR
+                )
+                self.scan_dirs = [
+                    value.get().strip() for value in getattr(self, "_scan_dir_vars", [])
+                    if value.get().strip()
+                ]
+                self.create_desktop_bat = bool(self.bat_var.get())
+            elif self.step == 4:
+                self.file_types = [
+                    ext for ext, value in self.file_type_vars.items() if value.get()
+                ]
+                if not self.file_types:
+                    messagebox.showwarning("文件类型", "请至少选择一种文件类型", parent=self.root)
+                    return False
+            elif self.step == 5:
+                raw_courses = self.course_names_text.get("1.0", tk.END)
+                self.course_names = installer_core._clean_list(raw_courses, 100, 80)
+                self.pack_profile = {
+                    "name": self.pack_name_entry.get().strip()[:100],
+                    "school": self.pack_school_entry.get().strip()[:100],
+                    "major": self.pack_major_entry.get().strip()[:100],
+                    "grade": self.pack_grade_entry.get().strip()[:100],
+                    "semester": self.active_semester,
+                }
+                self.apply_rules_on_upgrade = bool(self.apply_rules_var.get())
+                self.open_brain_after_install = bool(self.open_brain_var.get())
+                if self.imported_rule_pack is not None:
+                    self.imported_rule_pack = installer_core.validate_rule_pack(
+                        self.imported_rule_pack, self.course_names or None
+                    )
+            return True
+        except ValueError as exc:
+            messagebox.showerror("配置无效", str(exc), parent=self.root)
+            return False
+        except Exception as exc:
+            messagebox.showerror("无法保存当前步骤", str(exc), parent=self.root)
+            return False
 
     def _get_class_name_value(self):
         try:
@@ -323,50 +384,23 @@ class InstallerWizard:
         return abs_dir
 
     def _new_install_journal(self):
-        return {
-            "created_dirs": [],
-            "files": {},
-            "backup_dir": tempfile.mkdtemp(prefix="assignment_dashboard_installer_rollback_"),
-        }
+        return installer_core.InstallTransaction(self.install_dir)
 
     def _remember_dir(self, journal, path):
-        abs_path = os.path.abspath(path)
-        existed = os.path.exists(abs_path)
-        os.makedirs(abs_path, exist_ok=True)
-        if not existed:
-            journal["created_dirs"].append(abs_path)
-
-    def _remember_file_before_write(self, journal, path):
-        abs_path = os.path.abspath(path)
-        if abs_path in journal["files"]:
-            return
-        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-        if os.path.exists(abs_path):
-            backup_name = f"{uuid.uuid4().hex}_{os.path.basename(abs_path)}"
-            backup_path = os.path.join(journal["backup_dir"], backup_name)
-            shutil.copy2(abs_path, backup_path)
-            journal["files"][abs_path] = {"existed": True, "backup": backup_path}
-        else:
-            journal["files"][abs_path] = {"existed": False, "backup": None}
+        journal.ensure_dir(path)
 
     def _write_json_file(self, journal, path, payload):
-        self._remember_file_before_write(journal, path)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        journal.write_json(path, payload)
 
     def _write_text_file(self, journal, path, content):
-        self._remember_file_before_write(journal, path)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
+        journal.write_text(path, content)
 
     def _copy_install_file(self, journal, src, dst):
-        self._remember_file_before_write(journal, dst)
-        shutil.copy2(src, dst)
+        journal.copy_file(src, dst)
 
     def _cleanup_install_journal(self, journal):
-        backup_dir = journal.get("backup_dir") if journal else None
-        if backup_dir and os.path.exists(backup_dir):
-            shutil.rmtree(backup_dir, ignore_errors=True)
+        if journal:
+            journal.close()
     
     def _show_loading(self, text="加载中..."):
         """显示加载中提示"""
@@ -455,13 +489,95 @@ class InstallerWizard:
                 justify=tk.LEFT
             ).pack(anchor=tk.W, padx=60, pady=2)
         
+        mode_card = tk.Frame(frame, bg=self.colors["bg_card"])
+        mode_card.pack(fill=tk.X, padx=60, pady=(18, 0))
+        tk.Label(
+            mode_card,
+            text="安装方式",
+            font=("Segoe UI", 10, "bold"),
+            fg=self.colors["text"],
+            bg=self.colors["bg_card"],
+        ).pack(anchor=tk.W, padx=12, pady=(10, 4))
+        self.install_mode_var = tk.StringVar(value=self.install_mode)
+        modes = [
+            ("auto", "自动判断", "检测到用户配置时升级；只有程序文件时修复"),
+            ("new", "全新安装", "创建新的基础配置与分类规则"),
+            ("upgrade", "升级现有安装", "保留用户数据，只补充新配置项"),
+            ("repair", "修复程序文件", "只替换程序，不写入 data 目录"),
+        ]
+        for value, title, description in modes:
+            row = tk.Frame(mode_card, bg=self.colors["bg_card"])
+            row.pack(fill=tk.X, padx=8, pady=2)
+            tk.Radiobutton(
+                row, text=title, variable=self.install_mode_var, value=value,
+                font=("Segoe UI", 9, "bold"), fg=self.colors["text"],
+                bg=self.colors["bg_card"], activebackground=self.colors["bg_card"],
+                activeforeground=self.colors["text"], selectcolor=self.colors["bg_input"],
+            ).pack(side=tk.LEFT)
+            tk.Label(
+                row, text=description, font=("Segoe UI", 8),
+                fg=self.colors["text_muted"], bg=self.colors["bg_card"],
+            ).pack(side=tk.LEFT, padx=(8, 0))
+        target = tk.Frame(mode_card, bg=self.colors["bg_card"])
+        target.pack(fill=tk.X, padx=12, pady=(8, 10))
+        tk.Label(target, text="目标目录", font=("Segoe UI", 8), fg=self.colors["text_muted"],
+                 bg=self.colors["bg_card"]).pack(anchor=tk.W)
+        target_row = tk.Frame(target, bg=self.colors["bg_card"])
+        target_row.pack(fill=tk.X, pady=(3, 0))
+        self.welcome_install_dir_entry = tk.Entry(
+            target_row, font=("Segoe UI", 9), bg=self.colors["bg_input"], fg=self.colors["text"],
+            insertbackground=self.colors["accent"], relief=tk.FLAT, bd=5,
+        )
+        self.welcome_install_dir_entry.insert(0, self.install_dir)
+        self.welcome_install_dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(
+            target_row, text="浏览", command=self._browse_welcome_install_dir,
+            font=("Segoe UI", 8), bg=self.colors["bg_input"], fg=self.colors["text"],
+            relief=tk.FLAT, padx=9, pady=5,
+        ).pack(side=tk.LEFT, padx=(6, 0))
         tk.Label(
             frame,
-            text="\n点击「下一步」开始安装配置",
+            text="点击「下一步」继续",
             font=("Segoe UI", 10),
             fg=self.colors["text_muted"],
             bg=self.colors["bg"]
-        ).pack(pady=(16, 0))
+        ).pack(pady=(12, 0))
+
+    def _browse_welcome_install_dir(self):
+        path = filedialog.askdirectory(title="选择安装或升级目录", parent=self.root)
+        if path:
+            self.welcome_install_dir_entry.delete(0, tk.END)
+            self.welcome_install_dir_entry.insert(0, path)
+
+    def _load_existing_install_context(self, install_dir):
+        if self.detected_mode != "upgrade":
+            return
+        try:
+            cfg = installer_core.load_json(Path(install_dir) / "data" / "config.json", {})
+        except Exception as exc:
+            raise ValueError(f"现有配置无法读取，已停止升级：{exc}") from exc
+        if not isinstance(cfg, dict):
+            raise ValueError("现有配置不是 JSON 对象，已停止升级")
+        self.class_name = str(cfg.get("class_name") or self.class_name).strip()[:80]
+        ai_settings = cfg.get("ai_classifier") if isinstance(cfg.get("ai_classifier"), dict) else {}
+        self.active_semester = str(ai_settings.get("active_semester") or "").strip()[:100]
+        self.class_aliases = installer_core._clean_list(ai_settings.get("class_aliases"), 30, 80)
+        self.file_types = installer_core._clean_list(cfg.get("file_types"), 100, 20) or self.file_types
+        self.scan_dirs = installer_core._clean_list(cfg.get("scan_dirs"), 50, 500)
+        self.create_desktop_bat = True
+        rules_path = Path(install_dir) / "data" / "ai_rules.json"
+        try:
+            rules = installer_core.load_json(rules_path, {})
+            profile = rules.get("profile") if isinstance(rules, dict) and isinstance(rules.get("profile"), dict) else {}
+            self.pack_profile.update({key: str(profile.get(key) or "") for key in self.pack_profile})
+            if isinstance(rules, dict):
+                self.course_names = [
+                    name for name, item in (rules.get("subjects") or {}).items()
+                    if isinstance(item, dict) and item.get("active", True)
+                ]
+        except Exception as exc:
+            if rules_path.exists():
+                raise ValueError(f"现有专业包无法读取，已停止升级：{exc}") from exc
     
     # ============================================================
     # Step 1: 环境检测
@@ -621,7 +737,7 @@ class InstallerWizard:
         
         tk.Label(
             frame,
-            text="设置班级名称，将显示在仪表盘标题栏中",
+            text="班级信息用于文件名清洗；学期用于区分当前启用课程",
             font=("Segoe UI", 10),
             fg=self.colors["text_secondary"],
             bg=self.colors["bg"]
@@ -668,6 +784,28 @@ class InstallerWizard:
             self.class_preview.configure(text=f"预览: 仪表盘将显示「{name}」")
         
         self.class_entry.bind("<KeyRelease>", on_class_change)
+
+        tk.Label(
+            input_frame, text="班级别名（每行或逗号分隔）:",
+            font=("Segoe UI", 10), fg=self.colors["text_secondary"], bg=self.colors["bg"]
+        ).pack(anchor=tk.W, pady=(12, 0))
+        self.class_aliases_entry = tk.Entry(
+            input_frame, font=("Segoe UI", 10), bg=self.colors["bg_input"],
+            fg=self.colors["text"], insertbackground=self.colors["accent"], relief=tk.FLAT, bd=6,
+        )
+        self.class_aliases_entry.insert(0, "，".join(self.class_aliases))
+        self.class_aliases_entry.pack(fill=tk.X, pady=(4, 8))
+
+        tk.Label(
+            input_frame, text="当前学期（可留空）:",
+            font=("Segoe UI", 10), fg=self.colors["text_secondary"], bg=self.colors["bg"]
+        ).pack(anchor=tk.W)
+        self.semester_entry = tk.Entry(
+            input_frame, font=("Segoe UI", 10), bg=self.colors["bg_input"],
+            fg=self.colors["text"], insertbackground=self.colors["accent"], relief=tk.FLAT, bd=6,
+        )
+        self.semester_entry.insert(0, self.active_semester)
+        self.semester_entry.pack(fill=tk.X, pady=(4, 0))
     
     # ============================================================
     # Step 3: 安装与目录配置
@@ -739,7 +877,7 @@ class InstallerWizard:
         ).pack(side=tk.LEFT, padx=(6, 0))
         
         # 桌面BAT脚本
-        self.bat_var = tk.BooleanVar(value=True)
+        self.bat_var = tk.BooleanVar(value=self.create_desktop_bat)
         tk.Checkbutton(
             scroll_frame,
             text="在桌面创建启动脚本 (启动作业追踪器.bat)",
@@ -993,184 +1131,177 @@ class InstallerWizard:
     def _step_subjects(self):
         frame = tk.Frame(self.content_frame, bg=self.colors["bg"])
         frame.pack(fill=tk.BOTH, expand=True)
-        
+
         tk.Label(
             frame,
-            text="🏷️ 科目关键词配置",
+            text="分类大脑初始化",
             font=("Segoe UI", 16, "bold"),
             fg=self.colors["text"],
             bg=self.colors["bg"]
         ).pack(pady=(10, 6))
-        
+
         tk.Label(
             frame,
-            text="配置科目和关键词，系统将根据文件名自动归类作业",
+            text="可选步骤。零样本也能使用规则分类，所有设置安装后仍可修改。",
             font=("Segoe UI", 10),
             fg=self.colors["text_secondary"],
             bg=self.colors["bg"]
         ).pack(pady=(0, 12))
-        
-        # 可滚动的科目列表
-        canvas = tk.Canvas(frame, bg=self.colors["bg"], highlightthickness=0, height=280)
+
+        canvas = tk.Canvas(frame, bg=self.colors["bg"], highlightthickness=0)
         scrollbar = tk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
-        self.subjects_frame = tk.Frame(canvas, bg=self.colors["bg"])
-        
-        self.subjects_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=self.subjects_frame, anchor=tk.NW)
+        body = tk.Frame(canvas, bg=self.colors["bg"])
+        body.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        window = canvas.create_window((0, 0), window=body, anchor=tk.NW)
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
         canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=40)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(30, 0))
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        self._render_subjects()
-        
-        # 添加科目
-        add_frame = tk.Frame(frame, bg=self.colors["bg"])
-        add_frame.pack(fill=tk.X, padx=40, pady=(8, 0))
-        
-        self.new_subject_entry = tk.Entry(
-            add_frame,
-            font=("Segoe UI", 10),
-            bg=self.colors["bg_input"],
-            fg=self.colors["text"],
-            insertbackground=self.colors["accent"],
-            relief=tk.FLAT,
-            bd=6
+
+        profile = tk.Frame(body, bg=self.colors["bg_card"])
+        profile.pack(fill=tk.X, padx=(0, 18), pady=(0, 10))
+        tk.Label(profile, text="专业包信息", font=("Segoe UI", 10, "bold"),
+                 fg=self.colors["text"], bg=self.colors["bg_card"]).pack(anchor=tk.W, padx=12, pady=(10, 4))
+        grid = tk.Frame(profile, bg=self.colors["bg_card"])
+        grid.pack(fill=tk.X, padx=12, pady=(0, 10))
+        fields = [
+            ("规则包名称（可选）", "pack_name_entry", "name"),
+            ("学校（可选）", "pack_school_entry", "school"),
+            ("专业（可选）", "pack_major_entry", "major"),
+            ("年级（可选）", "pack_grade_entry", "grade"),
+        ]
+        for index, (label, attr, key) in enumerate(fields):
+            box = tk.Frame(grid, bg=self.colors["bg_card"])
+            box.grid(row=index // 2, column=index % 2, sticky="ew", padx=(0 if index % 2 == 0 else 5, 5 if index % 2 == 0 else 0), pady=3)
+            tk.Label(box, text=label, font=("Segoe UI", 8), fg=self.colors["text_muted"],
+                     bg=self.colors["bg_card"]).pack(anchor=tk.W)
+            entry = tk.Entry(box, font=("Segoe UI", 9), bg=self.colors["bg_input"], fg=self.colors["text"],
+                             insertbackground=self.colors["accent"], relief=tk.FLAT, bd=5)
+            entry.insert(0, self.pack_profile.get(key, ""))
+            entry.pack(fill=tk.X)
+            setattr(self, attr, entry)
+        grid.grid_columnconfigure(0, weight=1)
+        grid.grid_columnconfigure(1, weight=1)
+
+        courses_card = tk.Frame(body, bg=self.colors["bg_card"])
+        courses_card.pack(fill=tk.X, padx=(0, 18), pady=(0, 10))
+        tk.Label(courses_card, text="本学期正式课程", font=("Segoe UI", 10, "bold"),
+                 fg=self.colors["text"], bg=self.colors["bg_card"]).pack(anchor=tk.W, padx=12, pady=(10, 2))
+        tk.Label(courses_card, text="每行一门课程。课程为空时会保留纯规则冷启动。",
+                 font=("Segoe UI", 8), fg=self.colors["text_muted"], bg=self.colors["bg_card"]).pack(anchor=tk.W, padx=12)
+        self.course_names_text = tk.Text(
+            courses_card, height=5, font=("Segoe UI", 9), bg=self.colors["bg_input"],
+            fg=self.colors["text"], insertbackground=self.colors["accent"], relief=tk.FLAT, bd=6,
         )
-        self.new_subject_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.new_subject_entry.bind("<Return>", lambda e: self._add_subject())
-        
-        tk.Button(
-            add_frame, text="+ 添加科目",
-            command=self._add_subject,
-            font=("Segoe UI", 9),
-            bg=self.colors["accent"], fg="#000",
-            activebackground=self.colors["accent_hover"],
-            relief=tk.FLAT, bd=0, padx=12, pady=4,
-            cursor="hand2"
-        ).pack(side=tk.LEFT, padx=(6, 0))
-    
-    def _render_subjects(self):
-        """渲染科目关键词列表"""
-        for w in self.subjects_frame.winfo_children():
-            w.destroy()
-        
-        for subject, keywords in self.subjects.items():
-            subj_frame = tk.Frame(self.subjects_frame, bg=self.colors["bg_card"])
-            subj_frame.pack(fill=tk.X, pady=4)
-            
-            # 标题行
-            header = tk.Frame(subj_frame, bg=self.colors["bg_card"])
-            header.pack(fill=tk.X, padx=10, pady=(8, 4))
-            
-            tk.Label(
-                header,
-                text=f"📚 {subject}",
-                font=("Segoe UI", 11, "bold"),
-                fg=self.colors["text"],
-                bg=self.colors["bg_card"]
-            ).pack(side=tk.LEFT)
-            
-            tk.Button(
-                header, text="删除科目",
-                command=lambda s=subject: self._remove_subject(s),
-                font=("Segoe UI", 8),
-                fg=self.colors["danger"],
-                bg=self.colors["bg_card"],
-                activebackground=self.colors["bg_card"],
-                relief=tk.FLAT,
-                bd=0,
-                cursor="hand2"
-            ).pack(side=tk.RIGHT)
-            
-            # 关键词标签
-            kw_frame = tk.Frame(subj_frame, bg=self.colors["bg_card"])
-            kw_frame.pack(fill=tk.X, padx=10, pady=(0, 4))
-            
-            for kw in keywords:
-                kw_row = tk.Frame(kw_frame, bg=self.colors["bg_card"])
-                kw_row.pack(side=tk.LEFT, padx=(0, 4), pady=2)
-                
-                tk.Label(
-                    kw_row,
-                    text=kw,
-                    font=("Segoe UI", 9),
-                    fg=self.colors["accent"],
-                    bg=self.colors["bg_input"],
-                    padx=8, pady=2
-                ).pack(side=tk.LEFT)
-                
-                tk.Button(
-                    kw_row, text="×",
-                    command=lambda s=subject, k=kw: self._remove_keyword(s, k),
-                    font=("Segoe UI", 8),
-                    fg=self.colors["danger"],
-                    bg=self.colors["bg_input"],
-                    activebackground=self.colors["bg_input"],
-                    relief=tk.FLAT,
-                    bd=0,
-                    cursor="hand2"
-                ).pack(side=tk.LEFT)
-            
-            # 添加关键词输入
-            add_kw_frame = tk.Frame(subj_frame, bg=self.colors["bg_card"])
-            add_kw_frame.pack(fill=tk.X, padx=10, pady=(2, 8))
-            
-            kw_entry = tk.Entry(
-                add_kw_frame,
-                font=("Segoe UI", 9),
-                bg=self.colors["bg_input"],
-                fg=self.colors["text"],
-                insertbackground=self.colors["accent"],
-                relief=tk.FLAT,
-                bd=4
-            )
-            kw_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            kw_entry.bind("<Return>", lambda e, s=subject, entry=None: self._add_keyword_from_entry(s))
-            
-            tk.Button(
-                add_kw_frame, text="+",
-                command=lambda s=subject, e=None: self._add_keyword_from_entry(s),
-                font=("Segoe UI", 9, "bold"),
-                bg=self.colors["accent"], fg="#000",
-                activebackground=self.colors["accent_hover"],
-                relief=tk.FLAT, bd=0, padx=8, pady=2,
-                cursor="hand2"
-            ).pack(side=tk.LEFT, padx=(4, 0))
-    
-    def _add_subject(self):
-        """添加科目"""
-        name = self.new_subject_entry.get().strip()
-        if not name:
+        self.course_names_text.insert("1.0", "\n".join(self.course_names))
+        self.course_names_text.pack(fill=tk.X, padx=12, pady=(6, 8))
+        actions = tk.Frame(courses_card, bg=self.colors["bg_card"])
+        actions.pack(fill=tk.X, padx=12, pady=(0, 10))
+        for text, command in (
+            ("导入 JSON", self._import_rule_pack_file),
+            ("从剪贴板导入", self._import_rule_pack_clipboard),
+            ("复制 AI 生成提示词", self._copy_professional_prompt),
+        ):
+            tk.Button(actions, text=text, command=command, font=("Segoe UI", 8),
+                      bg=self.colors["bg_input"], fg=self.colors["text"], relief=tk.FLAT,
+                      padx=9, pady=5, cursor="hand2").pack(side=tk.LEFT, padx=(0, 6))
+        self.rule_pack_status = tk.Label(
+            courses_card,
+            text=(f"已导入专业包：{len((self.imported_rule_pack or {}).get('subjects', {}))} 门课程"
+                  if self.imported_rule_pack else "未导入专业包，将使用上方课程名称初始化空规则"),
+            font=("Segoe UI", 8), fg=self.colors["accent"] if self.imported_rule_pack else self.colors["text_muted"],
+            bg=self.colors["bg_card"], anchor=tk.W,
+        )
+        self.rule_pack_status.pack(fill=tk.X, padx=12, pady=(0, 10))
+
+        options = tk.Frame(body, bg=self.colors["bg_card"])
+        options.pack(fill=tk.X, padx=(0, 18), pady=(0, 14))
+        self.apply_rules_var = tk.BooleanVar(value=self.apply_rules_on_upgrade)
+        self.open_brain_var = tk.BooleanVar(value=self.open_brain_after_install)
+        tk.Checkbutton(
+            options, text="升级时合并本页专业包（默认关闭，避免改变现有课程）",
+            variable=self.apply_rules_var, font=("Segoe UI", 9), fg=self.colors["text"],
+            bg=self.colors["bg_card"], activebackground=self.colors["bg_card"],
+            selectcolor=self.colors["bg_input"],
+        ).pack(anchor=tk.W, padx=12, pady=(9, 2))
+        tk.Checkbutton(
+            options, text="安装完成后启动服务并打开现代版分类大脑",
+            variable=self.open_brain_var, font=("Segoe UI", 9), fg=self.colors["text"],
+            bg=self.colors["bg_card"], activebackground=self.colors["bg_card"],
+            selectcolor=self.colors["bg_input"],
+        ).pack(anchor=tk.W, padx=12, pady=2)
+        self.ollama_status_label = tk.Label(
+            options, text="本地增强：正在静默检测 Ollama...",
+            font=("Segoe UI", 8), fg=self.colors["text_muted"], bg=self.colors["bg_card"],
+        )
+        self.ollama_status_label.pack(anchor=tk.W, padx=12, pady=(4, 9))
+        threading.Thread(target=self._detect_ollama_for_page, daemon=True).start()
+
+    def _current_courses_and_profile(self):
+        courses = installer_core._clean_list(self.course_names_text.get("1.0", tk.END), 100, 80)
+        profile = {
+            "name": self.pack_name_entry.get().strip(),
+            "school": self.pack_school_entry.get().strip(),
+            "major": self.pack_major_entry.get().strip(),
+            "grade": self.pack_grade_entry.get().strip(),
+            "semester": self.active_semester,
+        }
+        return courses, profile
+
+    def _accept_rule_pack(self, payload):
+        courses, _profile = self._current_courses_and_profile()
+        normalized = installer_core.validate_rule_pack(payload, courses or None)
+        self.imported_rule_pack = normalized
+        imported_courses = list(normalized.get("subjects", {}))
+        if not courses:
+            self.course_names_text.delete("1.0", tk.END)
+            self.course_names_text.insert("1.0", "\n".join(imported_courses))
+        self.rule_pack_status.configure(
+            text=f"专业包校验通过：{len(imported_courses)} 门课程，安装时等待确认合并",
+            fg=self.colors["accent"],
+        )
+
+    def _import_rule_pack_file(self):
+        path = filedialog.askopenfilename(
+            title="选择专业包 JSON", parent=self.root,
+            filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
+        )
+        if not path:
             return
-        if name in self.subjects:
-            messagebox.showwarning("提示", f"科目「{name}」已存在", parent=self.root)
-            return
-        self.subjects[name] = []
-        self.new_subject_entry.delete(0, tk.END)
-        self._render_subjects()
-    
-    def _remove_subject(self, subject):
-        """删除科目"""
-        if messagebox.askyesno("确认", f"确定删除科目「{subject}」及其所有关键词？", parent=self.root):
-            del self.subjects[subject]
-            self._render_subjects()
-    
-    def _add_keyword_from_entry(self, subject):
-        """从输入框添加关键词（通过遍历子组件找到对应输入框）"""
-        # 简化处理：弹窗输入
-        kw = simpledialog.askstring("添加关键词", f"为「{subject}」添加关键词:", parent=self.root)
-        if kw and kw.strip():
-            kw = kw.strip()
-            if kw not in self.subjects.get(subject, []):
-                self.subjects[subject].append(kw)
-                self._render_subjects()
-    
-    def _remove_keyword(self, subject, keyword):
-        """删除关键词"""
-        if subject in self.subjects and keyword in self.subjects[subject]:
-            self.subjects[subject].remove(keyword)
-            self._render_subjects()
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                self._accept_rule_pack(json.load(handle))
+        except Exception as exc:
+            messagebox.showerror("专业包无效", str(exc), parent=self.root)
+
+    def _import_rule_pack_clipboard(self):
+        try:
+            self._accept_rule_pack(json.loads(self.root.clipboard_get()))
+        except Exception as exc:
+            messagebox.showerror("剪贴板专业包无效", str(exc), parent=self.root)
+
+    def _copy_professional_prompt(self):
+        courses, profile = self._current_courses_and_profile()
+        prompt = installer_core.professional_pack_prompt(profile, courses)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(prompt)
+        self.rule_pack_status.configure(text="专业包生成提示词已复制，可发送给任意 AI", fg=self.colors["accent"])
+
+    def _detect_ollama_for_page(self):
+        status = installer_core.ollama_status()
+        def update():
+            if not hasattr(self, "ollama_status_label") or not self.ollama_status_label.winfo_exists():
+                return
+            if status["available"]:
+                suffix = f" · {len(status['models'])} 个模型" if status["models"] else ""
+                self.ollama_status_label.configure(text="本地增强：检测到 Ollama" + suffix, fg=self.colors["accent"])
+            else:
+                self.ollama_status_label.configure(text="本地增强：未检测到 Ollama，可跳过并在安装后配置")
+        try:
+            self.root.after(0, update)
+        except (RuntimeError, tk.TclError):
+            # The user may close the wizard while the short probe is finishing.
+            pass
     
     # ============================================================
     # Step 6: 安装执行
@@ -1273,48 +1404,23 @@ class InstallerWizard:
     
     def _execute_install(self):
         """执行安装"""
-        # ====== 在主线程中收集所有 widget 值（Tkinter 不是线程安全的） ======
-        try:
-            install_dir = self.install_dir_entry.get().strip() or DEFAULT_INSTALL_DIR
-        except Exception:
-            install_dir = DEFAULT_INSTALL_DIR
-        
-        try:
-            class_name = self.class_entry.get().strip() if hasattr(self, 'class_entry') else self.class_name
-        except Exception:
-            class_name = self.class_name
-        
-        try:
-            create_desktop_bat = self.bat_var.get() if hasattr(self, 'bat_var') else True
-        except Exception:
-            create_desktop_bat = True
-        
-        try:
-            file_types = [ext for ext, var in self.file_type_vars.items() if var.get()]
-        except Exception:
-            file_types = [".pdf", ".docx", ".doc"]
-        
-        try:
-            data_dir = self.data_dir_entry.get().strip() if hasattr(self, 'data_dir_entry') else os.path.join(install_dir, "data")
-        except Exception:
-            data_dir = os.path.join(install_dir, "data")
-        # 当前后端固定使用安装目录下的 data/，这里强制对齐，避免写到无效的外部 data_dir。
-        data_dir = os.path.join(install_dir, "data")
-        
-        # 同步 scan_dirs
-        try:
-            if hasattr(self, '_scan_dir_vars'):
-                scan_dirs = [v.get().strip() for v in self._scan_dir_vars if v.get().strip()]
-            else:
-                scan_dirs = list(self.scan_dirs) if self.scan_dirs else []
-        except Exception:
-            scan_dirs = []
+        install_dir = self._ensure_safe_install_dir(self.install_dir or DEFAULT_INSTALL_DIR)
+        class_name = self.class_name or "课程班级"
+        create_desktop_bat = self.create_desktop_bat
+        file_types = self.file_types or [".pdf", ".docx", ".doc"]
+        scan_dirs = list(self.scan_dirs)
         for default_dir in self._default_scan_dirs(install_dir, class_name):
             if default_dir not in scan_dirs:
                 scan_dirs.append(default_dir)
-        
-        subjects = dict(self.subjects) if self.subjects else {}
-        python_ok = self.python_ok
+        mode = installer_core.detect_install_mode(install_dir, self.install_mode)
+        profile = dict(self.pack_profile)
+        profile["semester"] = self.active_semester
+        rules = self.imported_rule_pack or installer_core.build_course_rule_pack(
+            self.course_names, profile
+        )
+        python_ok = self.python_ok or os.path.isfile(
+            os.path.join(install_dir, "python", "python.exe")
+        )
         
         # 先显示开始日志
         self._log("安装准备就绪，开始执行...", "INFO")
@@ -1322,17 +1428,22 @@ class InstallerWizard:
         
         # 启动后台线程
         def install_thread():
-            self._do_install(install_dir, class_name, create_desktop_bat, file_types, data_dir, scan_dirs, subjects, python_ok)
+            self._do_install(
+                install_dir, class_name, create_desktop_bat, file_types, scan_dirs,
+                rules, python_ok, mode, self.apply_rules_on_upgrade,
+            )
         
         threading.Thread(target=install_thread, daemon=True).start()
     
-    def _do_install(self, install_dir, class_name, create_desktop_bat, file_types, data_dir, scan_dirs, subjects, python_ok):
+    def _do_install(self, install_dir, class_name, create_desktop_bat, file_types, scan_dirs,
+                    rules, python_ok, mode="auto", apply_rules_on_upgrade=False):
         """在后台线程中执行实际安装操作"""
         journal = None
         try:
             install_dir = self._ensure_safe_install_dir(install_dir)
             data_dir = os.path.join(install_dir, "data")
             scan_dirs = [os.path.abspath(d) for d in scan_dirs if d]
+            mode = installer_core.detect_install_mode(install_dir, mode)
             journal = self._new_install_journal()
             total_steps = 5
             if not python_ok:
@@ -1341,26 +1452,69 @@ class InstallerWizard:
             # ====== 步骤1: 创建目录 ======
             self._set_progress(5, "正在创建安装目录...")
             self._log("创建安装目录...")
-            
-            self._remember_dir(journal, install_dir)
-            self._remember_dir(journal, data_dir)
             class_folder = os.path.join(os.path.expanduser("~"), "Desktop", class_name)
             organized_dir = os.path.join(class_folder, "已收作业")
             experiment_dir = os.path.join(class_folder, "实验")
-            self._remember_dir(journal, class_folder)
-            self._remember_dir(journal, organized_dir)
-            self._remember_dir(journal, experiment_dir)
-            
-            # 创建扫描目录
-            for d in scan_dirs:
-                self._remember_dir(journal, d)
+            desired_config = installer_core.build_default_config(
+                class_name=class_name,
+                class_folder=class_folder,
+                organized_dir=organized_dir,
+                experiment_dir=experiment_dir,
+                scan_dirs=scan_dirs,
+                file_types=file_types,
+                version=APP_VERSION,
+                active_semester=self.active_semester,
+                class_aliases=self.class_aliases,
+            )
+            data_plan = installer_core.build_data_plan(
+                data_dir, mode, desired_config, rules,
+                apply_rules=bool(apply_rules_on_upgrade),
+            )
+            missing_resources = [
+                name for name in INSTALL_FILES
+                if not os.path.isfile(get_resource_path(name))
+            ]
+            if missing_resources:
+                raise FileNotFoundError(
+                    "安装资源缺失：" + "、".join(missing_resources[:5])
+                )
+            python_dir = os.path.join(install_dir, "python")
+            if not python_ok and os.path.exists(python_dir):
+                raise RuntimeError(
+                    "检测到不完整的内置 Python 目录。为避免覆盖未知文件，安装已停止；"
+                    "请先备份并移除安装目录中的 python 文件夹后重试。"
+                )
+            # Finish every read-only validation before stopping an old service.
+            # Invalid user data must leave the currently running install alone.
+            if mode in ("upgrade", "repair"):
+                self._set_progress(3, "正在安全停止旧服务...")
+                stop_result = installer_core.stop_running_install(install_dir)
+                if stop_result.get("running"):
+                    self._log("旧服务已正常停止，可以开始更新程序文件", "SUCCESS")
+
+            self._remember_dir(journal, install_dir)
+            effective_config = data_plan.get("config") or {}
+            if mode != "repair":
+                self._remember_dir(journal, data_dir)
+                class_folder = effective_config.get("class_folder", class_folder)
+                organized_dir = effective_config.get("organized_dir", organized_dir)
+                experiment_dir = effective_config.get("experiment_dir", experiment_dir)
+                for directory in [class_folder, organized_dir, experiment_dir]:
+                    if directory:
+                        self._remember_dir(journal, directory)
+                for directory in effective_config.get("scan_dirs", []):
+                    if directory:
+                        self._remember_dir(journal, directory)
             
             self._log(f"安装目录: {install_dir}", "SUCCESS")
-            self._log(f"数据目录: {data_dir}", "SUCCESS")
-            self._log(f"已收作业目录: {organized_dir}", "SUCCESS")
-            self._log(f"公示/作业目录: {experiment_dir}", "SUCCESS")
-            for d in scan_dirs:
-                self._log(f"扫描目录: {d}", "SUCCESS")
+            self._log(f"安装模式: {mode}", "SUCCESS")
+            if mode == "repair":
+                self._log("修复模式：data/ 中的配置与用户数据不会写入", "SUCCESS")
+            else:
+                self._log(f"数据目录: {data_dir}", "SUCCESS")
+                self._log(f"已收作业目录: {organized_dir}", "SUCCESS")
+                self._log(f"公示/作业目录: {experiment_dir}", "SUCCESS")
+                self._log(f"已保护运行数据: {len(data_plan.get('preserved', []))} 项", "SUCCESS")
             
             # ====== 步骤2: 下载Python（如果需要） ======
             step = 1
@@ -1368,11 +1522,13 @@ class InstallerWizard:
                 step = 2
                 self._set_progress(20, "正在下载嵌入版 Python...")
                 self._log("检测到未安装 Python，正在下载嵌入版...")
-                
-                python_dir = os.path.join(install_dir, "python")
+
                 self._remember_dir(journal, python_dir)
-                
-                zip_path = os.path.join(tempfile.gettempdir(), "python-embed.zip")
+
+                zip_path = os.path.join(
+                    tempfile.gettempdir(),
+                    f"assignment-dashboard-python-{uuid.uuid4().hex}.zip",
+                )
                 
                 try:
                     self._log(f"从 {PYTHON_EMBED_URL} 下载...")
@@ -1423,50 +1579,13 @@ class InstallerWizard:
             self._set_progress(progress_pct - 5, "正在写入配置文件...")
             self._log("生成配置文件...")
             
-            config = {
-                "class_name": class_name,
-                "class_folder": class_folder,
-                "organized_dir": organized_dir,
-                "experiment_dir": experiment_dir,
-                "wechat_accounts": [],
-                "watch_enabled": True,
-                "auto_organize": True,
-                "assignments": [],
-                "scan_dirs": scan_dirs,
-                "data_dir": data_dir,
-                "file_types": file_types,
-                "file_keywords": ["作业", "报告", "论文", "实验", "习题", "课设"],
-                "subject_keywords": subjects,
-                "port": APP_PORT,
-                "auto_scan_interval": 30,
-                "poll_interval": 5,
-                "templates": [],
-                "ignored_subjects": [],
-                "ai_classifier": {
-                    "mode": "rules",
-                    "sensitivity": 0.70,
-                    "sensitivity_preset": "balanced",
-                    "active_semester": "",
-                    "priority": "rules_first",
-                    "auto_train": True,
-                    "class_aliases": [],
-                },
-                "version": APP_VERSION
-            }
-            
-            config_path = os.path.join(data_dir, "config.json")
-            self._write_json_file(journal, config_path, config)
-            students_path = os.path.join(data_dir, "students.json")
-            submissions_path = os.path.join(data_dir, "submissions.json")
-            watcher_state_path = os.path.join(data_dir, "watcher_state.json")
-            if not os.path.exists(students_path):
-                self._write_json_file(journal, students_path, [])
-            if not os.path.exists(submissions_path):
-                self._write_json_file(journal, submissions_path, {})
-            if not os.path.exists(watcher_state_path):
-                self._write_json_file(journal, watcher_state_path, {"known_files": {}})
-            
-            self._log("配置文件已生成: data/config.json", "SUCCESS")
+            if mode != "repair":
+                self._write_json_file(journal, os.path.join(data_dir, "config.json"), data_plan["config"])
+                if data_plan.get("rules") is not None:
+                    self._write_json_file(journal, os.path.join(data_dir, "ai_rules.json"), data_plan["rules"])
+                for name, payload in data_plan.get("initialize", {}).items():
+                    self._write_json_file(journal, os.path.join(data_dir, name), payload)
+                self._log("配置与分类规则已安全写入", "SUCCESS")
             
             # ====== 步骤4: 复制文件 ======
             step += 1
@@ -1477,11 +1596,10 @@ class InstallerWizard:
             for fname in INSTALL_FILES:
                 src = get_resource_path(fname)
                 dst = os.path.join(install_dir, fname)
-                if os.path.exists(src):
-                    self._copy_install_file(journal, src, dst)
-                    self._log(f"  ✓ {fname}", "SUCCESS")
-                else:
-                    self._log(f"  ! {fname} 源文件未找到，跳过", "WARN")
+                if not os.path.isfile(src):
+                    raise FileNotFoundError(f"安装资源缺失：{fname}")
+                self._copy_install_file(journal, src, dst)
+                self._log(f"  ✓ {fname}", "SUCCESS")
             
             # ====== 步骤5: 创建BAT脚本 ======
             step += 1
@@ -1628,15 +1746,23 @@ class InstallerWizard:
             self._log("=" * 40, "INFO")
             self._log("安装完成！", "SUCCESS")
             self._log(f"服务地址: http://localhost:{APP_PORT}", "SUCCESS")
-            self._log(f"班级: {class_name}", "SUCCESS")
-            self._log(f"扫描目录: {len(scan_dirs)} 个", "SUCCESS")
-            self._log(f"科目: {len(subjects)} 个", "SUCCESS")
+            self._log(f"模式: {mode}", "SUCCESS")
+            if mode != "repair":
+                self._log(f"班级: {effective_config.get('class_name', class_name)}", "SUCCESS")
+                self._log(f"扫描目录: {len(effective_config.get('scan_dirs', []))} 个", "SUCCESS")
+                self._log(f"当前课程: {len((data_plan.get('rules') or rules or {}).get('subjects', {}))} 门", "SUCCESS")
             self._log(f"文件类型: {len(file_types)} 种", "SUCCESS")
             self._log("=" * 40, "INFO")
             self._log("双击「启动作业追踪器.bat」启动服务", "INFO")
             
             # 启用完成按钮
-            self.root.after(0, lambda: self.btn_next.configure(state=tk.NORMAL, text="完成 ✓"))
+            self.install_succeeded = True
+            self.root.after(0, lambda: self.btn_next.configure(
+                state=tk.NORMAL, text="启动并打开" if self.open_brain_after_install else "完成 ✓",
+                command=self._finish_install,
+            ))
+            if self.open_brain_after_install:
+                self._log("首次启动后可在现代版“分类大脑”继续配置", "INFO")
             self._cleanup_install_journal(journal)
             
         except Exception as e:
@@ -1652,6 +1778,30 @@ class InstallerWizard:
                 "安装失败",
                 f"安装过程发生错误:\n\n{str(e)}\n\n系统已自动回滚，请检查后重试。"
             ))
+
+    def _finish_install(self):
+        if self.install_succeeded and self.open_brain_after_install:
+            bat_path = os.path.join(self.install_dir, "启动作业追踪器.bat")
+            try:
+                if os.name == "nt" and os.path.exists(bat_path):
+                    subprocess.Popen(
+                        ["cmd", "/c", "start", "", bat_path],
+                        cwd=self.install_dir,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    self.root.after(
+                        1200,
+                        lambda: webbrowser.open(f"http://localhost:{APP_PORT}/modern#brain"),
+                    )
+                else:
+                    webbrowser.open(f"http://localhost:{APP_PORT}/modern#brain")
+            except Exception as exc:
+                messagebox.showwarning(
+                    "安装已完成",
+                    f"程序已安装，但自动启动失败：{exc}\n请双击安装目录中的启动脚本。",
+                    parent=self.root,
+                )
+        self.root.after(1400 if self.open_brain_after_install else 0, self.root.quit)
     
     def _rollback(self, install_dir=None, journal=None):
         """回滚安装，只恢复/删除本次安装记录过的文件和目录。"""
@@ -1664,27 +1814,7 @@ class InstallerWizard:
                 self._log("没有可用的安装记录，已跳过自动删除以保护已有文件。", "WARN")
                 return
 
-            for path, info in reversed(list(journal.get("files", {}).items())):
-                try:
-                    if info.get("existed"):
-                        backup = info.get("backup")
-                        if backup and os.path.exists(backup):
-                            shutil.copy2(backup, path)
-                            self._log(f"已恢复文件: {path}")
-                    elif os.path.exists(path):
-                        os.remove(path)
-                        self._log(f"已删除本次新建文件: {path}")
-                except Exception as e:
-                    self._log(f"回滚文件失败 {path}: {e}", "ERROR")
-
-            for path in reversed(journal.get("created_dirs", [])):
-                try:
-                    if os.path.isdir(path) and not os.listdir(path):
-                        os.rmdir(path)
-                        self._log(f"已删除本次新建空目录: {path}")
-                except Exception as e:
-                    self._log(f"回滚目录失败 {path}: {e}", "WARN")
-            
+            journal.rollback()
             self._log("回滚完成", "SUCCESS")
         except Exception as e:
             self._log(f"回滚失败: {e}", "ERROR")
@@ -1707,10 +1837,44 @@ class InstallerWizard:
 # ============================================================
 
 def main():
+    if "--self-test-output" in sys.argv:
+        try:
+            index = sys.argv.index("--self-test-output")
+            output = sys.argv[index + 1]
+            resources = {
+                name: os.path.isfile(get_resource_path(name))
+                for name in INSTALL_FILES
+            }
+            sample_pack = installer_core.build_course_rule_pack(
+                ["数字电子技术"], {"name": "安装器自检", "semester": "test"}
+            )
+            normalized = installer_core.validate_rule_pack(
+                sample_pack, ["数字电子技术"]
+            )
+            payload = {
+                "ok": all(resources.values()),
+                "version": APP_VERSION,
+                "resources": resources,
+                "rule_pack_subjects": list(normalized.get("subjects", {})),
+                "install_modes": sorted(installer_core.INSTALL_MODES),
+            }
+            installer_core.atomic_write_json(output, payload)
+            return 0 if payload["ok"] else 1
+        except Exception as exc:
+            try:
+                output = sys.argv[sys.argv.index("--self-test-output") + 1]
+                installer_core.atomic_write_json(output, {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+            except Exception:
+                pass
+            return 1
     wizard = InstallerWizard()
     wizard.run()
     print("安装向导已退出")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
