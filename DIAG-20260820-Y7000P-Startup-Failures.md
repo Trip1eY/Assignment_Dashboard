@@ -220,3 +220,74 @@
 2. WorkBuddy 修复已完成（unpacked 恢复），遗留 5.3.14 升级待更新机制恢复
 3. dsh：pnpm store 重建方案确认
 4. 是否同意清理 40 个 sunshine.exe 僵尸 + 重启 Sunshine 服务验证
+
+---
+
+## 9. 二次会诊回复 + Sunshine 根因实锤（2026-08-20 16:10）
+
+### 9.1 会诊回复（ChatGPT agent，GitHub 提交 5eee0ae）
+
+其他 agent 已在 GitHub `diag-report-clean` 分支提交 `REVIEW-20260820-Y7000P-Startup-Failures-ChatGPT.md`（459 行，Agent-ID: chatgpt@cloud#20260820-1604-y7000p-diag-review）。要点：
+
+- **WorkBuddy**：确认根因闭环、修复已实测通过 → 状态 **Resolved / Soak**。建议保留 .bak、暂不升 5.3.14、crashpad 不作为当前故障
+- **DSH**：确认 pnpm store 判断；建议先备份 node_modules 再 `pnpm install --frozen-lockfile`（不要先 prune）；"依赖损坏"与"无自启动"是两个独立问题，必须分开验收；最终建正式任务 `Y7000P-DSH`（登录触发 + 延迟 20-30s + 幂等退出 0）
+- **Sunshine 重要纠正**：`No main thread features enabled, skipping event loop` 是**正常日志**（tray 独立线程），不是退出原因；40 个 sunshine.exe 是 sunshinesvc supervisor（官方 CreateProcessAsUserW 循环）对 child 异常退出的结果；**新取证点：`C:/Windows/Temp/sunshine.log`**（service 捕获 child stdout/stderr）；明确不要先重建 conf/重装驱动/重装 Sunshine
+- **共同根因**：直接根因层无共同；上游诱因层保留 8-16~18 清理/杀毒线索，但不写成已确认根因
+
+### 9.2 Sunshine 根因实锤（验证会诊建议时命中）
+
+按会诊建议读取 `C:/Windows/Temp/sunshine.log`（3.7MB，16:09 持续更新）→ **抓到崩溃点**：
+
+```text
+[2026-08-20 16:09:45.156]: Info: No main thread features enabled, skipping event loop
+terminate called after throwing an instance of 'boost::wrapexcept<boost::property_tree::ptree_bad_path>'
+  what():  No such node (uuid)
+```
+
+**Sunshine 崩溃闭环（高置信）**：
+
+```text
+sunshine.conf 空文件（0 字节，疑似被清空）
+  -> boost::property_tree 解析配置时找不到必需节点 uuid
+  -> 未捕获异常 ptree_bad_path -> terminate
+  -> Sunshine.exe child 崩溃退出
+  -> sunshinesvc supervisor 每 ~2 分钟重新拉起
+  -> 40 个 32K 僵尸进程残留 + 47984/47986/47989/47990 从未监听
+```
+
+NvEnc 相关错误（YUV444/DEVICE_NOT_EXIST）在日志中被标注 "Ignore any errors mentioned above, they are not relevant"，**不是根因**。
+
+### 9.3 下一步（对齐会诊意见）
+
+1. **Sunshine**：保留现场（不重建 conf）→ 补取证（Application Event 1000/1001 详情、child exit code、端口监听边界）→ 由会诊确认后重建含 uuid 的 `sunshine.conf` 或从备份恢复
+2. **DSH**：按 Phase 2 修复（备份 node_modules → pnpm install --frozen-lockfile → 验证 tsx → 3080 → M10 远程启动），自启动单独建任务
+3. **WorkBuddy**：保持 Soak（不操作），冷启动验收随 Phase 5 一起
+
+---
+
+## 10. Phase 执行进展（2026-08-20 16:30）
+
+### Phase 1 ✅ Sunshine 现场取证（只读完成）
+- Event 1000/1001（Application Error）：Sunshine.exe 2026.516.1438.33 崩溃，异常码 **0xc0000409**（C++ 未捕获异常 terminate 的 fail-fast），出错模块 ucrtbase.dll 10.0.26100.8875，User=NT AUTHORITY\SYSTEM，时间 16:09:45 与日志 terminate 完全吻合；WER dump 留存（Report ID d59435e9...）
+- sunshine.conf 确认 **0 字节**，mtime 2026-07-19（7-19 起即空）；state.json（5100B，root.uniqueid 在）/apps.json（411B）/credentials（cacert/cakey）均完好
+- 崩溃点实锤（C:/Windows/Temp/sunshine.log）：`ptree_bad_path: No such node (uuid)`
+- supervisor 行为确认：sunshinesvc（PID 稳定）每 ~2 分钟 CreateProcessAsUserW 拉起 child，child 崩溃后循环 → 40 个僵尸
+
+### Phase 2 ✅ DSH 依赖重建 + 启动验证
+- pnpm（corepack 11.7.0）install --frozen-lockfile 重建依赖；tsx 4.22.4 恢复
+- **坑**：pnpm workspace 子包链接坏（apps\cli\node_modules 悬空，commander 读不到）→ 删除 cli\node_modules 重装修复
+- **dsh 已启动：127.0.0.1:3080 LISTENING（PID 12464 稳定）**
+- M10 远程触发路径：start-dsh.ps1 幂等（3080 已监听则跳过）→ 兼容
+
+### Phase 3 ⚠️ Sunshine 定点修复——受阻，挂起等会诊
+- 尝试：conf 补 `uuid` 节点（uuid = test / 真实 UUID）+ 完整配置 → **仍崩**
+- 关键日志：`config: 'uuid' = test` 被读到 + `Warning: Unrecognized configurable option [uuid]` → **此版本 uuid 不是 conf 配置项**，崩溃的 ptree.get("uuid") 来自另一处（state 解析路径待查）
+- 两机 state.json 结构一致（root.uniqueid，无 uuid）→ state 非直接差异源
+- **结论**：Sunshine 2026.516 服务模式对 uuid 的读取路径与预期不同，需会诊 agent 从源码/更多日志定位；**已保留现场**（未重装/未改驱动/未动 state），conf 已还原为 uuid=test 状态便于继续排查
+
+### Phase 4 ✅ DSH 自启动任务
+- 正式任务 **Y7000P-DSH**：Trigger=At logon，Delay=30s，Action=`start-dsh-run.bat`（含幂等：3080 已监听则 exit 0），状态就绪
+- 测试任务 DSH_Start 已清理
+
+### Phase 5 ⏳ 冷启动验收（待用户安排重启）
+验收项：WorkBuddy 用户会话稳定 / dsh 3080 LISTENING / Sunshine 按会诊修复后 47990 监听 + Moonlight 可连
