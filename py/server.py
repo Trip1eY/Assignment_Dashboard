@@ -82,7 +82,9 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 # ---------------------------------------------------------------------------
 # 数据路径
 # ---------------------------------------------------------------------------
-BASE_DIR = Path(__file__).parent
+PY_DIR = Path(__file__).resolve().parent
+BASE_DIR = PY_DIR.parent
+HTML_DIR = BASE_DIR / "html"
 DATA_DIR = BASE_DIR / "data"
 CONFIG_PATH = DATA_DIR / "config.json"
 STUDENTS_PATH = DATA_DIR / "students.json"
@@ -159,6 +161,53 @@ _IS_PREVIEW_CONVERTER = "--preview-convert" in sys.argv
 APP_VERSION = "0.1.1"
 UPDATE_REPOSITORY = "Trip1eY/Assignment_Dashboard"
 VERSION_MANIFEST = BASE_DIR / "manifest.json"
+STATIC_FILE_SUFFIXES = {".css", ".js", ".png", ".svg", ".ico"}
+UPDATE_REQUIRED_FILES = (
+    "py/launcher.py",
+    "py/server.py",
+    "html/dashboard.html",
+    "html/dashboard_modern.html",
+    "html/static/classic.css",
+    "html/static/classic.js",
+    "html/static/modern.css",
+    "html/static/modern.js",
+)
+LEGACY_UPDATE_ALIASES = {
+    "server.py": "py/launcher.py",
+    "dashboard.html": "html/dashboard.html",
+    "dashboard_modern.html": "html/dashboard_modern.html",
+    "static/classic.css": "html/static/classic.css",
+    "static/classic.js": "html/static/classic.js",
+    "static/modern.css": "html/static/modern.css",
+    "static/modern.js": "html/static/modern.js",
+}
+WINDOWS_UPDATE_FILES = ("repair_update.bat", "启动作业追踪器.bat", "更新修复工具.bat")
+UNIX_UPDATE_FILES = ("start.sh",)
+
+
+def platform_update_files(platform=None):
+    platform = (platform or sys.platform).lower()
+    return list(WINDOWS_UPDATE_FILES if platform.startswith("win") else UNIX_UPDATE_FILES)
+
+
+def _atomic_write_update_file(target, content, executable=False):
+    """Replace one update file atomically and preserve/assign executable mode."""
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    old_mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else None
+    temp_target = target.with_name(f".{target.name}.{uuid.uuid4().hex}.update-tmp")
+    try:
+        temp_target.write_bytes(content)
+        if executable:
+            temp_target.chmod((old_mode or 0o644) | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        elif old_mode is not None:
+            temp_target.chmod(old_mode)
+        os.replace(temp_target, target)
+    finally:
+        try:
+            temp_target.unlink()
+        except OSError:
+            pass
 
 
 def _update_platform_matches(target, current=None):
@@ -208,30 +257,13 @@ def _select_update_asset(assets, platform=None):
 
 
 def _normalize_update_member(name):
-    name = str(name or "").replace("\\", "/").lstrip("/")
+    name = str(name or "").replace("\\", "/")
+    if name.startswith("/") or (len(name) >= 2 and name[1] == ":"):
+        return ""
     parts = [part for part in name.split("/") if part not in ("", ".")]
     if not parts or any(part == ".." for part in parts):
         return ""
-    if len(name) >= 2 and name[1] == ":":
-        return ""
     return "/".join(parts)
-
-
-def _atomic_write_update_file(target, content):
-    target = Path(target)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    old_mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else None
-    temp_target = target.with_name(f".{target.name}.{uuid.uuid4().hex}.update-tmp")
-    try:
-        temp_target.write_bytes(content)
-        if old_mode is not None:
-            temp_target.chmod(old_mode)
-        os.replace(temp_target, target)
-    finally:
-        try:
-            temp_target.unlink()
-        except OSError:
-            pass
 
 
 def _version_key(value):
@@ -251,6 +283,21 @@ def current_app_version():
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
     return APP_VERSION
+
+
+def resolve_static_file(url_path, base_dir=HTML_DIR):
+    """Resolve a public static asset without allowing access outside base_dir."""
+    if not isinstance(url_path, str) or "\\" in url_path:
+        return None
+    root = Path(base_dir).resolve()
+    candidate = (root / url_path.lstrip("/")).resolve()
+    if candidate.suffix.lower() not in STATIC_FILE_SUFFIXES:
+        return None
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
 
 THEME_PRESETS = [
     {
@@ -460,10 +507,13 @@ def _preview_cache_path(src):
 
 def _find_libreoffice():
     candidates = [shutil.which("soffice"), shutil.which("libreoffice")]
-    candidates.extend([
-        os.environ.get("PROGRAMFILES", "") + r"\LibreOffice\program\soffice.exe",
-        os.environ.get("PROGRAMFILES(X86)", "") + r"\LibreOffice\program\soffice.exe",
-    ])
+    if sys.platform == "darwin":
+        candidates.append("/Applications/LibreOffice.app/Contents/MacOS/soffice")
+    elif sys.platform == "win32":
+        candidates.extend([
+            os.environ.get("PROGRAMFILES", "") + r"\LibreOffice\program\soffice.exe",
+            os.environ.get("PROGRAMFILES(X86)", "") + r"\LibreOffice\program\soffice.exe",
+        ])
     for value in candidates:
         if value and Path(value).exists():
             return str(Path(value))
@@ -869,10 +919,40 @@ def build_submission_record(file_info, student_name, assignment_id, assignment_n
         record.update(extra)
     return record
 
-# 微信文件目录
-WECHAT_FILES_BASE = Path.home() / "Documents" / "WeChat Files"
-# 微信 4.x 新路径（C:\Users\xxx\xwechat_files\）
-XWECHAT_BASE = Path.home() / "xwechat_files"
+def wechat_base_candidates(home=None, platform=None):
+    """Return platform-specific WeChat storage roots without assuming one bundle team id."""
+    home = Path(home or Path.home())
+    platform = platform or sys.platform
+    if platform == "darwin":
+        container = home / "Library" / "Containers" / "com.tencent.xinWeChat"
+        candidates = [
+            container / "Data" / "Documents" / "xwechat_files",
+            container / "Data" / "Library" / "Application Support" / "com.tencent.xinWeChat",
+            container / "Data",
+            container,
+            home / "Library" / "Application Support" / "com.tencent.xinWeChat",
+            home / "Documents" / "WeChat Files",
+            home / "xwechat_files",
+        ]
+        group_root = home / "Library" / "Group Containers"
+        try:
+            for group in sorted(group_root.glob("*.com.tencent.xinWeChat")):
+                candidates.extend([
+                    group / "Documents" / "xwechat_files",
+                    group / "Data" / "Documents" / "xwechat_files",
+                    group / "xwechat_files",
+                    group,
+                ])
+        except OSError:
+            pass
+        return list(dict.fromkeys(candidates))
+    return [home / "Documents" / "WeChat Files", home / "xwechat_files"]
+
+
+WECHAT_BASE_CANDIDATES = wechat_base_candidates()
+WECHAT_FILES_BASE = WECHAT_BASE_CANDIDATES[0]
+XWECHAT_BASE = WECHAT_BASE_CANDIDATES[1]
+_wechat_discovery_warnings = []
 
 # ---------------------------------------------------------------------------
 # 配置/数据管理
@@ -2502,24 +2582,72 @@ def release_server_lock():
 # ---------------------------------------------------------------------------
 
 def discover_wechat_accounts():
-    """自动发现微信文件目录（支持新旧版本路径）"""
+    """自动发现微信文件目录，并保留权限/访问诊断供设置页展示。"""
+    global _wechat_discovery_warnings
     accounts = []
-    # 旧版路径: Documents\WeChat Files\wxid_xxx\FileStorage\File
-    for base in (WECHAT_FILES_BASE, XWECHAT_BASE):
-        if not base.exists():
-            continue
-        for d in base.iterdir():
-            if not d.is_dir():
+    warnings = []
+    seen = set()
+
+    def add_account(account):
+        key = _path_key(account)
+        if key and key not in seen:
+            seen.add(key)
+            accounts.append(str(account))
+
+    for base in WECHAT_BASE_CANDIDATES:
+        try:
+            if not base.exists():
                 continue
-            # 旧版: d/FileStorage/File
-            file_dir = d / "FileStorage" / "File"
-            if file_dir.exists():
-                accounts.append(str(d))
-            # 新版 4.x: d/msg/file (如 xwechat_files\wxid_xxx_port\msg\file)
-            msg_file_dir = d / "msg" / "file"
-            if msg_file_dir.exists():
-                accounts.append(str(d))
+            if not os.access(str(base), os.R_OK | os.X_OK):
+                warnings.append(f"微信目录无访问权限: {base}")
+                continue
+        except OSError as exc:
+            warnings.append(f"微信目录无法访问: {base} ({exc})")
+            continue
+
+        roots = [base]
+        try:
+            roots.extend(d for d in base.iterdir() if d.is_dir())
+        except PermissionError:
+            warnings.append(f"微信目录被 macOS 拒绝访问: {base}")
+            continue
+        except OSError as exc:
+            warnings.append(f"微信目录读取失败: {base} ({exc})")
+            continue
+
+        for account in roots:
+            try:
+                if (account / "FileStorage" / "File").is_dir() or (account / "msg" / "file").is_dir():
+                    add_account(account)
+            except OSError as exc:
+                warnings.append(f"微信账户目录读取失败: {account} ({exc})")
+
+    _wechat_discovery_warnings = list(dict.fromkeys(warnings))
     return accounts
+
+
+def runtime_capabilities():
+    """Return optional runtime features and actionable platform warnings."""
+    libreoffice = _find_libreoffice()
+    warnings = []
+    if not libreoffice and sys.platform != "win32":
+        warnings.append("未检测到 LibreOffice，Word 文档转换和预览功能可能不可用。")
+    if not HAS_DOCX:
+        warnings.append("未安装 python-docx，.docx 文本提取功能不可用。")
+    if not HAS_PDF:
+        warnings.append("未安装 PyPDF2，PDF 文本提取功能不可用。")
+    if sys.platform == "darwin" and _wechat_discovery_warnings:
+        warnings.append("macOS 可能阻止了微信目录访问，请检查“隐私与安全性”中的文件与文件夹或完全磁盘访问权限。")
+    return {
+        "platform": sys.platform,
+        "python": ".".join(str(v) for v in sys.version_info[:3]),
+        "docx_text": HAS_DOCX,
+        "pdf_text": HAS_PDF,
+        "libreoffice": bool(libreoffice),
+        "libreoffice_path": libreoffice,
+        "word_preview": bool(libreoffice) or sys.platform == "win32",
+        "warnings": list(dict.fromkeys(warnings)),
+    }
 
 def get_watch_dirs():
     """获取需要监控的所有微信目录（兼容新旧版本路径）"""
@@ -3894,8 +4022,10 @@ class _WordWindowHider:
 
 
 class _WordComContext:
-    """Word COM 上下文管理器，统一处理 COM 初始化/清理"""
+    """Word COM 上下文管理器，统一处理 COM 初始化/清理（仅 Windows）"""
     def __enter__(self):
+        if sys.platform != "win32":
+            raise OSError("Word COM automation is only available on Windows")
         import pythoncom
         pythoncom.CoInitialize()
         import win32com.client
@@ -3924,13 +4054,17 @@ class _WordComContext:
         return self.doc
 
     def __exit__(self, *args):
-        if self.doc:
+        if getattr(self, "doc", None):
             try: self.doc.Close(SaveChanges=False)
             except: pass
-        try: self.word.Quit()
-        except: pass
-        import pythoncom
-        pythoncom.CoUninitialize()
+        if getattr(self, "word", None):
+            try: self.word.Quit()
+            except: pass
+        try:
+            import pythoncom
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
         return False  # 不吞异常
 
 
@@ -4657,10 +4791,18 @@ class APIHandler(SimpleHTTPRequestHandler):
             self._json({"ok": True, **preview_warmup_payload()})
 
         elif path == "/api/status":
+            watch_dirs = get_effective_watch_dirs()
+            discovered_accounts = discover_wechat_accounts()
             self._json({
                 "watching": watcher.running,
                 "known_files": len(watcher.known_files),
-                "watch_dirs": get_effective_watch_dirs(),
+                "watch_dirs": watch_dirs,
+                "capabilities": runtime_capabilities(),
+                "wechat_discovery": {
+                    "accounts_found": len(discovered_accounts),
+                    "warnings": _wechat_discovery_warnings,
+                    "manual_selection_required": sys.platform == "darwin" and not bool(discovered_accounts),
+                },
             })
 
         elif path == "/api/health":
@@ -4722,14 +4864,7 @@ class APIHandler(SimpleHTTPRequestHandler):
         elif path == "/api/scan-existing":
             cfg = load_config()
             # 支持 target=experiment: 从公示/实验目录回填到已收作业
-            # GET 走 query string（apiGet），POST 走 body（apiPost），两者都支持
-            # TODO(方案D-Step2): 此路由当前只在 GET handler 注册；POST handler 注册后此 try 块才真正命中 body 分支
-            _qs_target = (qs.get("target", [""])[0] if qs else "")
-            try:
-                _body_target = data.get("target", "")
-            except (NameError, UnboundLocalError):
-                _body_target = ""
-            target = _qs_target or _body_target
+            target = qs.get("target", [""])[0]
             if target == "experiment":
                 if not cfg.get("experiment_enabled", False):
                     self._json({"scanned": 0, "matched": 0, "deleted": 0, "skipped_no_student": 0, "dirs": 0,
@@ -4781,6 +4916,8 @@ class APIHandler(SimpleHTTPRequestHandler):
                 try:
                     if sys.platform == "win32":
                         os.startfile(str(safe_fp))
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", str(safe_fp)])
                     else:
                         subprocess.Popen(["xdg-open", str(safe_fp)])
                     self._json({"ok": True})
@@ -4797,6 +4934,8 @@ class APIHandler(SimpleHTTPRequestHandler):
                 try:
                     if sys.platform == "win32":
                         os.startfile(parent)
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", parent])
                     else:
                         subprocess.Popen(["xdg-open", parent])
                     self._json({"ok": True})
@@ -5081,8 +5220,8 @@ class APIHandler(SimpleHTTPRequestHandler):
             self._serve_html("dashboard_modern.html")
         else:
             # 尝试静态文件
-            file_path = BASE_DIR / path.lstrip("/")
-            if file_path.exists() and file_path.is_file():
+            file_path = resolve_static_file(path)
+            if file_path:
                 self._serve_static(file_path)
             else:
                 self.send_error(404)
@@ -5107,6 +5246,33 @@ class APIHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
             except Exception:
                 pass
+
+    def _handle_lan_auth(self, data):
+        cfg = load_config_raw()
+        supplied = str(data.get("token") or "")
+        expected = str(cfg.get("lan_access_token") or "")
+        if not cfg.get("lan_access_enabled", False) or not expected or not hmac.compare_digest(supplied, expected):
+            self._json({"ok": False, "msg": "访问口令错误"}, status=401)
+            return
+        self._json({"ok": True}, extra_headers={
+            "Set-Cookie": f"{LAN_SESSION_COOKIE}={expected}; Path=/; HttpOnly; SameSite=Strict"
+        })
+
+    def _handle_network_access_configure(self, data):
+        if not self._request_is_local():
+            self._json({"ok": False, "msg": "只能在运行服务的电脑上修改访问模式"}, status=403)
+            return
+        cfg = load_config_raw()
+        enabled = bool(data.get("enabled", False))
+        if enabled and (data.get("regenerate_token") or not cfg.get("lan_access_token")):
+            cfg["lan_access_token"] = secrets.token_urlsafe(12)
+        cfg["lan_access_enabled"] = enabled
+        save_config(cfg)
+        port = self.server.server_address[1]
+        payload = network_access_payload(cfg, port, include_token=True, is_local=True)
+        payload.update({"ok": True, "restarting": True})
+        self._json(payload)
+        threading.Thread(target=_restart_after_delay, name="network-mode-restart").start()
 
     def _do_POST_impl(self):
         parsed = urlparse(self.path)
@@ -5147,34 +5313,16 @@ class APIHandler(SimpleHTTPRequestHandler):
             self._json({"ok": False, "msg": "分类大脑模块不可用，主服务仍可正常使用"})
             return
 
-        if path == "/api/lan-auth":
-            cfg = load_config_raw()
-            supplied = str(data.get("token") or "")
-            expected = str(cfg.get("lan_access_token") or "")
-            if not cfg.get("lan_access_enabled", False) or not expected or not hmac.compare_digest(supplied, expected):
-                self._json({"ok": False, "msg": "访问口令错误"}, status=401)
-                return
-            self._json({"ok": True}, extra_headers={
-                "Set-Cookie": f"{LAN_SESSION_COOKIE}={expected}; Path=/; HttpOnly; SameSite=Strict"
-            })
+        json_handlers = {
+            "/api/lan-auth": self._handle_lan_auth,
+            "/api/network-access/configure": self._handle_network_access_configure,
+        }
+        handler = json_handlers.get(path)
+        if handler:
+            handler(data)
+            return
 
-        elif path == "/api/network-access/configure":
-            if not self._request_is_local():
-                self._json({"ok": False, "msg": "只能在运行服务的电脑上修改访问模式"}, status=403)
-                return
-            cfg = load_config_raw()
-            enabled = bool(data.get("enabled", False))
-            if enabled and (data.get("regenerate_token") or not cfg.get("lan_access_token")):
-                cfg["lan_access_token"] = secrets.token_urlsafe(12)
-            cfg["lan_access_enabled"] = enabled
-            save_config(cfg)
-            port = self.server.server_address[1]
-            payload = network_access_payload(cfg, port, include_token=True, is_local=True)
-            payload.update({"ok": True, "restarting": True})
-            self._json(payload)
-            threading.Thread(target=_restart_after_delay, name="network-mode-restart").start()
-
-        elif path == "/api/convert-upload":
+        if path == "/api/convert-upload":
             # JSON 模式（不支持，提示使用 multipart）
             self._json({"ok": False, "msg": "请使用表单上传文件"})
 
@@ -5816,6 +5964,20 @@ class APIHandler(SimpleHTTPRequestHandler):
             if not new_dir:
                 self._json({"ok": False, "msg": "路径不能为空"})
                 return
+            resolved_dir = _safe_resolve_path(new_dir)
+            if not resolved_dir or not resolved_dir.exists():
+                self._json({"ok": False, "msg": f"目录不存在，请检查路径后重试: {new_dir}"})
+                return
+            if not resolved_dir.is_dir():
+                self._json({"ok": False, "msg": f"所选路径不是文件夹: {new_dir}"})
+                return
+            if not os.access(str(resolved_dir), os.R_OK | os.X_OK):
+                msg = "目录没有读取权限"
+                if sys.platform == "darwin":
+                    msg += "，请在“系统设置 → 隐私与安全性”中授权终端、Python 或当前应用"
+                self._json({"ok": False, "msg": f"{msg}: {new_dir}"})
+                return
+            new_dir = str(resolved_dir)
             cfg = load_config_raw()
             scan_dirs = cfg.get("scan_dirs", [])
             if new_dir not in scan_dirs:
@@ -6662,25 +6824,29 @@ class APIHandler(SimpleHTTPRequestHandler):
 
         safe_version = re.sub(r"[^0-9A-Za-z._-]+", "_", version).strip("._-") or "update"
         package_files = [
-            "server.py",
-            "ai_classifier.py",
-            "classifier_features.py",
-            "classifier_trainer.py",
-            "dashboard.html",
-            "dashboard_modern.html",
-            "restart_helper.py",
-            "pack.py",
-            "repair_update.py",
-            "repair_update.bat",
-            "启动作业追踪器.bat",
-            "更新修复工具.bat",
-        ]
+            "py/launcher.py",
+            "py/server.py",
+            "py/ai_classifier.py",
+            "py/classifier_features.py",
+            "py/classifier_trainer.py",
+            "html/dashboard.html",
+            "html/dashboard_modern.html",
+            "html/static/classic.css",
+            "html/static/classic.js",
+            "html/static/modern.css",
+            "html/static/modern.js",
+            "py/restart_helper.py",
+            "py/pack.py",
+            "py/repair_update.py",
+            "requirements.txt",
+        ] + platform_update_files()
 
         manifest = {
             "app": "Assignment_Dashboard",
             "version": version,
+            "platform": sys.platform,
             "created_at": datetime.now().isoformat(timespec="seconds"),
-            "files": package_files,
+            "files": package_files + list(LEGACY_UPDATE_ALIASES),
             "has_changelog": False,
             "has_announcement": len(announcements) > 0,
         }
@@ -6696,6 +6862,10 @@ class APIHandler(SimpleHTTPRequestHandler):
                     fp = BASE_DIR / name
                     if fp.exists() and fp.is_file():
                         zf.write(fp, name)
+                for legacy_name, source_name in LEGACY_UPDATE_ALIASES.items():
+                    fp = BASE_DIR / source_name
+                    if fp.exists() and fp.is_file():
+                        zf.write(fp, legacy_name)
                 if announcements:
                     zf.writestr("announcement.json", json.dumps(announcement_payload, ensure_ascii=False, indent=2).encode("utf-8"))
                 zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
@@ -6825,8 +6995,7 @@ class APIHandler(SimpleHTTPRequestHandler):
                 return
 
         # 3. 验证关键文件存在
-        required_files = ["server.py", "dashboard.html"]
-        missing = [f for f in required_files if f not in file_list]
+        missing = [f for f in UPDATE_REQUIRED_FILES if f not in file_list]
         if missing:
             self._json({"ok": False, "msg": f"更新包缺少关键文件: {', '.join(missing)}"})
             return
@@ -6865,7 +7034,13 @@ class APIHandler(SimpleHTTPRequestHandler):
         try:
             # 备份当前关键文件
             backup_entries = []
-            for item in ["server.py", "ai_classifier.py", "classifier_features.py", "classifier_trainer.py", "dashboard.html", "dashboard_modern.html", "pack.py", "repair_update.py", "repair_update.bat", "CHANGELOG.md", "announcement.json", "manifest.json", "启动作业追踪器.bat", "更新修复工具.bat"]:
+            for item in ["py/launcher.py", "py/server.py", "py/ai_classifier.py", "py/restart_helper.py",
+                         "py/classifier_features.py", "py/classifier_trainer.py",
+                         "html/dashboard.html", "html/dashboard_modern.html", "html/static/classic.css",
+                         "html/static/classic.js", "html/static/modern.css", "html/static/modern.js",
+                         "py/pack.py", "py/repair_update.py", "repair_update.bat", "CHANGELOG.md",
+                         "announcement.json", "manifest.json", "启动作业追踪器.bat",
+                         "更新修复工具.bat", "start.sh", "requirements.txt"]:
                 fp = BASE_DIR / item
                 if fp.exists():
                     backup_entries.append((str(fp), item))
@@ -6893,7 +7068,7 @@ class APIHandler(SimpleHTTPRequestHandler):
         # 使用更新前的接力脚本执行健康检查和失败回滚，避免新包覆盖 helper 后失去恢复能力。
         rollback_helper = DATA_DIR / ".update_restart_helper.py"
         try:
-            shutil.copy2(BASE_DIR / "restart_helper.py", rollback_helper)
+            shutil.copy2(PY_DIR / "restart_helper.py", rollback_helper)
         except Exception as e:
             self._json({"ok": False, "msg": f"准备更新接力程序失败: {str(e)[:200]}"})
             return
@@ -6904,8 +7079,8 @@ class APIHandler(SimpleHTTPRequestHandler):
         try:
             with zipfile.ZipFile(io.BytesIO(zip_data), "r") as zf:
                 for member, raw_member in names_by_member.items():
-                    # 保护用户数据：不覆盖 data/*.json 文件
-                    if member.startswith("data/") and member.endswith(".json"):
+                    # 保护用户数据和运行状态：更新包不得覆盖 data/。
+                    if member.startswith("data/"):
                         print(f"[Update] 跳过用户数据文件: {member}")
                         continue
                     # 提取到项目根目录
@@ -6919,7 +7094,7 @@ class APIHandler(SimpleHTTPRequestHandler):
                     if not target_path.exists():
                         created_files.append(member)
                     content = zf.read(raw_member)
-                    _atomic_write_update_file(target_path, content)
+                    _atomic_write_update_file(target_path, content, executable=member.endswith(".sh"))
                     updated_files.append(member)
                     print(f"[Update] 已更新: {member}")
         except Exception as e:
@@ -6991,7 +7166,7 @@ class APIHandler(SimpleHTTPRequestHandler):
                         continue
                     target = (BASE_DIR / member).resolve()
                     target.relative_to(BASE_DIR.resolve())
-                    _atomic_write_update_file(target, zf.read(raw_name))
+                    _atomic_write_update_file(target, zf.read(raw_name), executable=member.endswith(".sh"))
             print("[Update] 回滚成功")
         except Exception as e:
             print(f"[Update] 回滚失败: {e}")
@@ -7129,7 +7304,7 @@ class APIHandler(SimpleHTTPRequestHandler):
             self._json({"ok": False, "msg": f"打包失败: {str(e)[:200]}"})
 
     def _serve_html(self, filename):
-        file_path = BASE_DIR / filename
+        file_path = HTML_DIR / filename
         if file_path.exists():
             self._serve_static(file_path)
         else:
@@ -7332,6 +7507,8 @@ def _restart_server(backup_path=None, created_files=None, helper_path=None):
         }
         if sys.platform == "win32":
             helper_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        else:
+            helper_kwargs["start_new_session"] = True
         helper_command = [sys.executable, helper_path, "--port", str(port)]
         if backup_path:
             helper_command.extend(["--backup", str(backup_path), "--base-dir", str(BASE_DIR)])

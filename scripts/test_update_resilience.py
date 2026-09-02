@@ -10,9 +10,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+PY_DIR = ROOT / "py"
+sys.path.insert(0, str(PY_DIR))
 
 import restart_helper
+import repair_update
 import server
 
 
@@ -41,6 +43,12 @@ class UpdateResilienceTest(unittest.TestCase):
         self.assertTrue(server._update_platform_matches("all", "win32"))
         self.assertFalse(server._update_platform_matches("macos", "win32"))
 
+    def test_update_members_reject_absolute_and_traversal_paths(self):
+        for name in ("/tmp/update.py", "C:/temp/update.py", "../update.py", "a/../../update.py"):
+            self.assertEqual("", server._normalize_update_member(name))
+            self.assertEqual("", restart_helper._normalize_member(name))
+            self.assertIsNone(repair_update.normalize_member(name))
+
     def test_restart_helper_restores_backup_and_removes_created_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -68,7 +76,7 @@ class UpdateResilienceTest(unittest.TestCase):
         env["PYTHONIOENCODING"] = "gbk"
         result = subprocess.run(
             [sys.executable, "-c", "import server; print('⚠ Unicode output')"],
-            cwd=ROOT,
+            cwd=PY_DIR,
             env=env,
             capture_output=True,
             timeout=20,

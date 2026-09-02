@@ -40,11 +40,11 @@ def _option_values(args, name):
 
 
 def _normalize_member(name):
-    name = str(name or "").replace("\\", "/").lstrip("/")
+    name = str(name or "").replace("\\", "/")
+    if name.startswith("/") or (len(name) >= 2 and name[1] == ":"):
+        return ""
     parts = [part for part in name.split("/") if part not in ("", ".")]
     if not parts or any(part == ".." for part in parts):
-        return ""
-    if len(name) >= 2 and name[1] == ":":
         return ""
     return "/".join(parts)
 

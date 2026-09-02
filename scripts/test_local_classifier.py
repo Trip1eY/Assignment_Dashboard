@@ -6,7 +6,7 @@ import gzip
 import json
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py"))
 
 import ai_classifier
 import classifier_features
@@ -670,7 +670,7 @@ class SampleWorkbenchServiceTest(unittest.TestCase):
 
 class DistributionManifestTest(unittest.TestCase):
     def test_training_modules_are_shipped_without_runtime_data(self):
-        expected = {"classifier_features.py", "classifier_trainer.py"}
+        expected = {"py/classifier_features.py", "py/classifier_trainer.py"}
         self.assertTrue(expected.issubset(set(installer.INSTALL_FILES)))
         self.assertTrue(expected.issubset(set(pack.PACK_CONFIG["include_files"])))
         self.assertIn("data", pack.PACK_CONFIG["exclude_patterns"])
@@ -678,7 +678,7 @@ class DistributionManifestTest(unittest.TestCase):
 
         root = Path(__file__).resolve().parents[1]
         spec_text = (root / "微信作业追踪器_安装向导.spec").read_text(encoding="utf-8")
-        server_text = (root / "server.py").read_text(encoding="utf-8")
+        server_text = (root / "py" / "server.py").read_text(encoding="utf-8")
         for filename in expected:
             self.assertIn(filename, spec_text)
             self.assertGreaterEqual(server_text.count(f'"{filename}"'), 2)
