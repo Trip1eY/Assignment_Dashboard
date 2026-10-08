@@ -28,6 +28,7 @@ import ipaddress
 import hmac
 import stat
 from backup_paths import backup_directory
+from assignment_import import AssignmentImporter, MAX_REQUEST_BYTES, digest as import_content_digest, parse_upload_parts
 from http.cookies import SimpleCookie
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -175,6 +176,9 @@ UPDATE_REQUIRED_FILES = (
     "html/static/modern.js",
     "py/backup_paths.py",
     "html/static/course_subjects.js",
+    "py/assignment_import.py",
+    "html/static/assignment_imports.js",
+    "html/static/assignment_imports.css",
     "html/static/course_rules_editor.js",
     "html/static/course_rules_editor.css",
 )
@@ -483,6 +487,18 @@ if not _IS_PREVIEW_CONVERTER and CONVERT_TEMP_DIR.exists():
         pass
 CONVERT_TEMP_DIR.mkdir(parents=True, exist_ok=True)
 _json_locks = {}
+_submission_mutation_lock = threading.RLock()
+
+
+def submission_transaction(func):
+    def wrapped(*args, **kwargs):
+        with _submission_mutation_lock:
+            return func(*args, **kwargs)
+    return wrapped
+
+
+def assignment_importer():
+    return AssignmentImporter(DATA_DIR / "assignment_imports", sys.modules[__name__])
 watcher = None
 _warmup_thread = None  # 后台预热线程引用
 _warmup_lock = threading.Lock()
@@ -2232,7 +2248,10 @@ def resolve_class_config():
         experiment_base = class_folder / "实验"
         print(f"[INFO] experiment_dir 未配置，回退使用: {experiment_base}")
     EXPERIMENT_BASE = experiment_base
-    EXPERIMENT_BASE.mkdir(parents=True, exist_ok=True)
+    try:
+        EXPERIMENT_BASE.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"[WARN] 同步文件夹暂不可用，不阻断已收作业读取: {exc}")
     
     return class_name, class_folder, organized_dir, experiment_base
 
@@ -2463,6 +2482,7 @@ def _system_output_roots(cfg=None):
     """Directories written by this app; realtime watcher must not process them."""
     cfg = cfg or load_config_raw()
     roots = [
+        DATA_DIR / "assignment_imports",
         cfg.get("organized_dir"),
         cfg.get("experiment_dir"),
         str(ORGANIZED_DIR),
@@ -2481,6 +2501,7 @@ def _allowed_file_roots():
     """Directories that may be exposed by file preview/open APIs."""
     cfg = load_config_raw()
     roots = [
+        DATA_DIR / "assignment_imports",
         cfg.get("organized_dir"),
         cfg.get("experiment_dir"),
         CONVERT_TEMP_DIR,
@@ -3265,6 +3286,8 @@ def _record_matches_assignment(r, a):
     sn = r.get("student", "")
     if not sn:
         return False
+    if r.get("source_kind") == "assignment_import" and r.get("status") == "manual_matched":
+        return r.get("assignment_id") == a_id
 
     a_sg = a.get("subject_group", "")
     a_exp = a.get("experiment", "")
@@ -3516,12 +3539,15 @@ def _submission_record_dedupe_key(record, assignment_id=None):
     if not isinstance(record, dict):
         return None
     file_info = record.get("file") or {}
-    return _submission_dedupe_key_from_parts(
+    key = _submission_dedupe_key_from_parts(
         record.get("student"),
         assignment_id or record.get("assignment_id"),
         file_info.get("name", ""),
         file_info.get("size", 0),
     )
+    if record.get("source_kind") == "assignment_import" and record.get("content_sha256"):
+        return key + (record["content_sha256"],)
+    return key
 
 
 def _submission_record_score(record, cfg=None):
@@ -3731,6 +3757,7 @@ def _create_zip(entries, compress=True):
 # 已有文件批量扫描
 # ---------------------------------------------------------------------------
 
+@submission_transaction
 def scan_existing_directory(base_path, filename_student=False):
     """扫描已有目录，匹配学生和作业，去重后导入提交记录
     
@@ -4455,12 +4482,33 @@ def parse_multipart(body: bytes, boundary: str):
 # 核心处理流程
 # ---------------------------------------------------------------------------
 
+def process_new_file_atomic(file_info, students, assignments):
+    with _submission_mutation_lock:
+        submissions = load_submissions()
+        record = process_new_file(file_info, students, assignments, submissions)
+        save_submissions(submissions)
+        return record
+
+
 def process_new_file(file_info, students, assignments, submissions):
     """处理一个新文件的完整流程（带去重：同一文件路径只保留最新记录）"""
     filename = file_info["name"]
     file_path = file_info["path"]
     cfg = load_config_raw()
     student_name, score = match_file_to_student(filename, students)
+    # A manually imported source may later appear in the watched WeChat folder.
+    # Keep its explicit destination and avoid creating a second pending record.
+    incoming_hash = None
+    for records in submissions.values():
+        for saved in records if isinstance(records, list) else []:
+            if (saved.get("source_kind") == "assignment_import" and student_name and
+                    saved.get("student") == student_name and saved.get("content_sha256") and
+                    (saved.get("file") or {}).get("size") == file_info.get("size")):
+                target = is_allowed_file_path(saved.get("organized_to") or "")
+                if target:
+                    incoming_hash = incoming_hash or import_content_digest(file_path)
+                    if incoming_hash == saved["content_sha256"] and import_content_digest(target) == incoming_hash:
+                        return saved
     subject_result = classify_file_subject(file_info, assignments, cfg, source_kind="wechat")
     subject_group = subject_result.get("subject_group", "")
     if subject_result.get("status") == "subject_matched":
@@ -4725,7 +4773,7 @@ class FileWatcher:
                                 continue
 
                             _ts = time.time()
-                            record = process_new_file(f, students, assignments, submissions)
+                            record = process_new_file_atomic(f, students, assignments)
                             if record:
                                 record["_process_time"] = time.time() - _ts
 
@@ -4742,7 +4790,6 @@ class FileWatcher:
                         self._tick_spinner()
 
                     if dirty and new_files:
-                        save_submissions(submissions)
                         self._save_state_if_dirty()
                         dirty = False
 
@@ -4869,6 +4916,12 @@ class APIHandler(SimpleHTTPRequestHandler):
         elif path == "/api/health":
             self._json(data_health())
 
+        elif path == "/api/assignment-import/status":
+            try:
+                self._json(assignment_importer().status(qs.get("assignment_id", [""])[0]))
+            except ValueError as exc:
+                self._json({"ok": False, "msg": str(exc)}, status=400)
+
         elif path == "/api/students":
             self._json(load_students())
 
@@ -4906,7 +4959,7 @@ class APIHandler(SimpleHTTPRequestHandler):
             errors = []
             for f in scan_new_files(watcher.known_files):
                 try:
-                    record = process_new_file(f, students, assignments, submissions)
+                    record = process_new_file_atomic(f, students, assignments)
                     watcher.known_files.add(f["path"])
                     if f.get("mtime"):
                         watcher.file_mtimes[f["path"]] = f["mtime"]
@@ -4918,7 +4971,6 @@ class APIHandler(SimpleHTTPRequestHandler):
                     errors.append({"file": f["name"], "path": f["path"], "error": str(e)})
                     watcher.known_files.add(f["path"])
             if found:
-                save_submissions(submissions)
                 watcher._save_state_if_dirty()
             self._json({"scanned": len(found), "new": found, "errors": errors})
 
@@ -5296,7 +5348,11 @@ class APIHandler(SimpleHTTPRequestHandler):
             if not self._origin_is_allowed():
                 self._json({"ok": False, "msg": "拒绝跨站请求"}, status=403)
                 return
-            self._do_POST_impl()
+            if path.startswith("/api/assignment-import/"):
+                self._do_POST_impl()
+            else:
+                with _submission_mutation_lock:
+                    self._do_POST_impl()
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass  # 客户端断开，静默忽略
         except Exception as e:
@@ -5341,6 +5397,10 @@ class APIHandler(SimpleHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         content_type = self.headers.get("Content-Type", "")
 
+        if path.startswith("/api/assignment-import/") and (content_length <= 0 or content_length > MAX_REQUEST_BYTES):
+            self._json({"ok": False, "msg": "请求为空或超过 100 MB 限制"}, status=413)
+            return
+
         # 检查是否为 multipart 上传
         if "multipart/form-data" in content_type:
             body = self.rfile.read(content_length) if content_length else b""
@@ -5353,6 +5413,15 @@ class APIHandler(SimpleHTTPRequestHandler):
                     break
             if boundary:
                 parts = parse_multipart(body, boundary)
+                if path == "/api/assignment-import/upload":
+                    try:
+                        parts = parse_upload_parts(body, content_type)
+                        fields = {p["name"]: p.get("data", b"").decode("utf-8", errors="replace")
+                                  for p in parts if not p.get("filename")}
+                        self._json(assignment_importer().upload(fields.get("assignment_id", ""), parts, fields.get("request_id", "")))
+                    except ValueError as exc:
+                        self._json({"ok": False, "msg": str(exc)}, status=400)
+                    return
                 if path == "/api/convert-upload":
                     self._convert_upload(parts)
                     return
@@ -5370,6 +5439,13 @@ class APIHandler(SimpleHTTPRequestHandler):
             data = json.loads(body)
         except:
             data = {}
+        if path == "/api/assignment-import/resolve":
+            try:
+                self._json(assignment_importer().resolve(str(data.get("batch_id", "")), str(data.get("item_id", "")),
+                                                        str(data.get("student_ref", "")), bool(data.get("discard", False))))
+            except ValueError as exc:
+                self._json({"ok": False, "msg": str(exc)}, status=400)
+            return
         if path.startswith("/api/ai/") and not HAS_AI_CLASSIFIER:
             self._json({"ok": False, "msg": "分类大脑模块不可用，主服务仍可正常使用"})
             return
@@ -6695,7 +6771,7 @@ class APIHandler(SimpleHTTPRequestHandler):
             org_to = r.get("organized_to") or ""
             if org_to:
                 class_name, class_folder, _, _ = resolve_class_config()
-                if str(class_folder) not in org_to and class_name not in org_to:
+                if r.get("source_kind") != "assignment_import" and str(class_folder) not in org_to and class_name not in org_to:
                     continue
             # 用统一入口判断是否属于本作业（含 fallback 重新匹配）
             if not _record_matches_assignment(r, assignment):
@@ -6906,6 +6982,9 @@ class APIHandler(SimpleHTTPRequestHandler):
             "html/static/modern.js",
             "py/backup_paths.py",
             "html/static/course_subjects.js",
+            "py/assignment_import.py",
+            "html/static/assignment_imports.js",
+            "html/static/assignment_imports.css",
             "html/static/course_rules_editor.js",
             "html/static/course_rules_editor.css",
             "py/restart_helper.py",
@@ -7112,6 +7191,9 @@ class APIHandler(SimpleHTTPRequestHandler):
                          "html/dashboard.html", "html/dashboard_modern.html", "html/static/classic.css",
                          "html/static/classic.js", "html/static/modern.css", "html/static/modern.js",
                          "py/backup_paths.py", "html/static/course_subjects.js",
+                         "py/assignment_import.py",
+                         "html/static/assignment_imports.js",
+                         "html/static/assignment_imports.css",
                          "html/static/course_rules_editor.js", "html/static/course_rules_editor.css",
                          "py/pack.py", "py/repair_update.py", "repair_update.bat", "CHANGELOG.md",
                          "announcement.json", "manifest.json", "启动作业追踪器.bat",

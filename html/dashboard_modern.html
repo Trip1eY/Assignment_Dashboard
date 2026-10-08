@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>课程作业运营台</title>
 <script src="/static/course_subjects.js"></script>
+<script src="/static/assignment_imports.js"></script>
+<link rel="stylesheet" href="/static/assignment_imports.css">
 <link rel="stylesheet" href="/static/course_rules_editor.css">
 <script src="/static/course_rules_editor.js"></script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111127'/%3E%3Crect x='14' y='14' width='14' height='14' rx='3' fill='%238b5cf6'/%3E%3Crect x='36' y='14' width='14' height='14' rx='3' fill='%2322d3a6'/%3E%3Crect x='14' y='36' width='14' height='14' rx='3' fill='%2322d3a6'/%3E%3Crect x='36' y='36' width='14' height='14' rx='3' fill='%238b5cf6'/%3E%3C/svg%3E">
@@ -7651,6 +7653,7 @@ function renderAssignmentDetail(data) {
   <div class="detail-grid">
     <div class="card">
       <div class="section-head"><h3>已提交学生</h3><span class="pill good">${done} 人</span></div>
+      <div id="assignment-import"></div>
       <div class="submission-list">${submittedHtml}</div>
     </div>
     <div class="card">
@@ -7663,6 +7666,15 @@ function renderAssignmentDetail(data) {
     <p class="row-sub">这些文件已识别当前科目，但还没有确认具体作业，因此未归档，也未同步到公示文件夹。</p>
     <div class="submission-files">${pendingHtml}</div>
   </div>`;
+  mountAssignmentImport(detail.querySelector('#assignment-import'), a, {
+    escapeHtml, preview: previewFile,
+    onChanged: async () => {
+      await loadAll();
+      if (window._activeAssignmentDetailId === a.id) {
+        renderAssignmentDetail(await apiGet('/api/assignment/' + encodeURIComponent(a.id)));
+      }
+    }
+  });
 }
 async function openPreviewFolderByPath(path) {
   if (path) await apiGet('/api/open-folder?path=' + encodeURIComponent(path));

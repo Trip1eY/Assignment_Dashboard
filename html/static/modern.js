@@ -1004,6 +1004,7 @@ function renderAssignmentDetail(data) {
   <div class="detail-grid">
     <div class="card">
       <div class="section-head"><h3>已提交学生</h3><span class="pill good">${done} 人</span></div>
+      <div id="assignment-import"></div>
       <div class="submission-list">${submittedHtml}</div>
     </div>
     <div class="card">
@@ -1016,6 +1017,15 @@ function renderAssignmentDetail(data) {
     <p class="row-sub">这些文件已识别当前科目，但还没有确认具体作业，因此未归档，也未同步到公示文件夹。</p>
     <div class="submission-files">${pendingHtml}</div>
   </div>`;
+  mountAssignmentImport(detail.querySelector('#assignment-import'), a, {
+    escapeHtml, preview: previewFile,
+    onChanged: async () => {
+      await loadAll();
+      if (window._activeAssignmentDetailId === a.id) {
+        renderAssignmentDetail(await apiGet('/api/assignment/' + encodeURIComponent(a.id)));
+      }
+    }
+  });
 }
 async function openPreviewFolderByPath(path) {
   if (path) await apiGet('/api/open-folder?path=' + encodeURIComponent(path));

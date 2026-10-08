@@ -22,6 +22,9 @@ REQUIRED_FILES = (
     "html/static/classic.css", "html/static/classic.js", "html/static/modern.css",
     "html/static/modern.js",
     "py/backup_paths.py", "html/static/course_subjects.js",
+    "py/assignment_import.py",
+    "html/static/assignment_imports.js",
+    "html/static/assignment_imports.css",
     "html/static/course_rules_editor.js", "html/static/course_rules_editor.css",
 )
 
