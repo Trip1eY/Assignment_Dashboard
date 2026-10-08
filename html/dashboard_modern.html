@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>课程作业运营台</title>
+<script src="/static/course_subjects.js"></script>
+<link rel="stylesheet" href="/static/course_rules_editor.css">
+<script src="/static/course_rules_editor.js"></script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111127'/%3E%3Crect x='14' y='14' width='14' height='14' rx='3' fill='%238b5cf6'/%3E%3Crect x='36' y='14' width='14' height='14' rx='3' fill='%2322d3a6'/%3E%3Crect x='14' y='36' width='14' height='14' rx='3' fill='%2322d3a6'/%3E%3Crect x='36' y='36' width='14' height='14' rx='3' fill='%238b5cf6'/%3E%3C/svg%3E">
 <style>
   :root {
@@ -234,6 +237,13 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,.055);
   }
   input { background: rgba(12,12,11,.58); }
+  :root { --select-popup-bg: #24221f; }
+  select option, select optgroup { color: var(--text); background: var(--select-popup-bg) !important; }
+  body.ui-mecha { --select-popup-bg: #111722; }
+  body.ui-shader { --select-popup-bg: #17162a; }
+  body.ui-minimal { --select-popup-bg: #f1f5f9; }
+  body.ui-paper { --select-popup-bg: #efe2cf; }
+  body.ui-minimal select, body.ui-paper select { color-scheme: light; }
   input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
   #page-brain .brain-toolbar #brain-mode {
     min-height: 44px;
@@ -5865,7 +5875,7 @@
               <div class="form-grid">
                 <input id="new-assignment-name" placeholder="作业卡片标题：如 课程报告、大作业">
                 <select id="new-assignment-subject" onchange="handleAssignmentSubjectChange()"></select>
-                <input id="new-assignment-subject-custom" placeholder="科目名称：显示为一级科目卡片，如 课程报告" hidden>
+                <input id="new-assignment-subject-custom" placeholder="课程名称：显示为一级科目卡片，如 数字信号处理" hidden>
                 <input id="new-assignment-exp" placeholder="作业批次/小项标题：如 第一次/项目一/章节练习/实验三">
                 <input id="new-assignment-keywords" placeholder="识别词：只用于文件匹配，不显示在卡片上">
                 <button class="primary" data-icon="add" onclick="addAssignment()">添加</button>
@@ -6007,9 +6017,7 @@
           <section class="brain-scene scene-courses" id="brain-scene-courses" aria-label="课程分类树状态"></section>
           <div class="brain-layout">
             <div class="card">
-              <div class="section-head"><h3>课程规则</h3><button class="primary" onclick="saveBrainCourses()">保存课程</button></div>
-              <div id="brain-course-list" class="brain-course-list"></div>
-              <div class="file-actions"><button onclick="addBrainCourseRow()">添加课程</button></div>
+              <div id="brain-course-editor"></div>
             </div>
             <div class="card">
               <div class="section-head"><h3>新科目训练向导</h3><span class="pill">只读取文件名</span></div>
@@ -6551,7 +6559,6 @@ window._assignmentDetailFileRecords = [];
 window._previewFilePath = '';
 window._activeAssignmentDetailId = '';
 window._activeAssignmentDetail = null;
-const COMMON_SUBJECTS = ['课程报告', '课程论文', '项目作业', '实验报告', '课程设计', '小组作业', '数字电子技术', '程序设计'];
 const MODERN_GUIDE_KEY = 'assignment-os-modern-guide-completed-v1';
 const modernGuideSteps = [
   {
@@ -7661,26 +7668,9 @@ async function openPreviewFolderByPath(path) {
   if (path) await apiGet('/api/open-folder?path=' + encodeURIComponent(path));
 }
 function assignmentSubjectOptions() {
-  const seen = new Set();
-  const out = [];
-  const add = value => {
-    const text = String(value || '').trim();
-    if (!text || text === '其他' || seen.has(text)) return;
-    seen.add(text);
-    out.push(text);
-  };
-  COMMON_SUBJECTS.forEach(add);
-  for (const a of [...(state.assignments || []), ...(state.dashboard?.assignments || [])]) {
-    add(a.subject_group || a.subject);
-  }
-  for (const a of (state.config?.assignments || [])) {
-    add(a.subject_group || a.subject);
-  }
-  return out.sort((a, b) => {
-    const ai = COMMON_SUBJECTS.indexOf(a);
-    const bi = COMMON_SUBJECTS.indexOf(b);
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) || a.localeCompare(b, 'zh-CN');
-  });
+  return assignmentCourseSubjects(state.aiRules, [
+    ...(state.assignments || []), ...(state.dashboard?.assignments || []), ...(state.config?.assignments || [])
+  ]);
 }
 function parseKeywordInput(text) {
   const seen = new Set();
@@ -7698,17 +7688,39 @@ function renderAssignmentSubjectSelect() {
   if (!select) return;
   const previous = select.value;
   const options = assignmentSubjectOptions();
+  if (previous && previous !== '__custom__' && !options.includes(previous)) options.push(previous);
   select.innerHTML = `<option value="">选择科目</option>${options.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}<option value="__custom__">新建科目...</option>`;
   if (previous && [...select.options].some(o => o.value === previous)) select.value = previous;
-  handleAssignmentSubjectChange();
+  handleAssignmentSubjectChange({ focus: false });
 }
-function handleAssignmentSubjectChange() {
+function handleAssignmentSubjectChange({ focus = true } = {}) {
   const select = document.getElementById('new-assignment-subject');
   const custom = document.getElementById('new-assignment-subject-custom');
   if (!select || !custom) return;
   const isCustom = select.value === '__custom__';
   custom.hidden = !isCustom;
-  if (isCustom) custom.focus();
+  if (isCustom && focus) custom.focus();
+}
+function refreshCourseSubjectOptions() {
+  renderAssignmentSubjectSelect();
+  const subjects = assignmentSubjectOptions();
+  document.querySelectorAll('[id^="pending-subject-"]').forEach(select => {
+    const previous = select.value;
+    const choices = [...new Set([...subjects, previous].filter(Boolean))];
+    select.innerHTML = '<option value="">选择课程</option>' + choices.map(name =>
+      `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+    select.value = previous;
+  });
+}
+function renderPendingAssignmentSelect(index) {
+  const subject = document.getElementById(`pending-subject-${index}`)?.value;
+  const select = document.getElementById(`pending-assignment-${index}`);
+  if (!select) return;
+  const previous = select.value;
+  const assignments = (state.assignments || []).filter(item => (item.subject_group || item.subject) === subject);
+  select.innerHTML = '<option value="">选择具体作业</option>' + assignments.map(item =>
+    `<option value="${escapeHtml(item.id)}">${escapeHtml(assignmentDisplayTitle(item))}</option>`).join('');
+  if ([...select.options].some(option => option.value === previous)) select.value = previous;
 }
 function selectedAssignmentSubject() {
   const select = document.getElementById('new-assignment-subject');
@@ -7808,7 +7820,7 @@ function renderFiles() {
   const pendingCount = document.getElementById('pending-archive-count');
   if (pendingList && pendingCount) {
     pendingCount.textContent = pending.length + ' 个';
-    const subjects = [...new Set((state.assignments || []).map(a => a.subject_group).filter(Boolean))];
+    const subjects = assignmentSubjectOptions();
     const pendingPages = Math.max(1, Math.ceil(pending.length / pageSize));
     filePages.pending = Math.min(Math.max(1, filePages.pending), pendingPages);
     const pendingStart = (filePages.pending - 1) * pageSize;
@@ -7816,7 +7828,8 @@ function renderFiles() {
       const i = pendingStart + offset;
       const c = f.classification || {};
       const candidates = c.candidates || [];
-      const subjectOptions = subjects.map(s => `<option value="${escapeHtml(s)}" ${s === c.subject_group ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
+      const choices = [...new Set([...subjects, c.subject_group].filter(Boolean))];
+      const subjectOptions = '<option value="">选择课程</option>' + choices.map(s => `<option value="${escapeHtml(s)}" ${s === c.subject_group ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
       const assignmentOptions = (state.assignments || []).filter(a => a.subject_group === c.subject_group).map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(assignmentDisplayTitle(a))}</option>`).join('');
       return `<div class="card material-card">
         <div><span class="tag orange">待归档</span><h3>${escapeHtml(f.file_name || '-')}</h3>
@@ -7831,7 +7844,7 @@ function renderFiles() {
         </div>
         <div class="file-actions">
           <button onclick="previewPendingArchive(${i})">预览</button><button onclick="analyzePendingArchive(${i})">智能识别</button><button class="danger" onclick="ignorePendingArchive(${i})">忽略</button>
-          <select id="pending-subject-${i}">${subjectOptions}</select><button onclick="setPendingSubject(${i})">修改科目</button>
+          <select id="pending-subject-${i}" onchange="renderPendingAssignmentSelect(${i})">${subjectOptions}</select><button onclick="setPendingSubject(${i})">修改科目</button>
           <select id="pending-assignment-${i}"><option value="">选择具体作业</option>${assignmentOptions}</select><button class="primary" onclick="confirmPendingAssignment(${i})">确认归档</button>
         </div>
       </div>`;
@@ -8964,6 +8977,7 @@ function renderBrainPanelScenes() {
   });
 }
 function renderClassificationBrain() {
+  refreshCourseSubjectOptions();
   const stats = document.getElementById('brain-stats');
   const flow = document.getElementById('brain-flow');
   const summary = document.getElementById('brain-summary');
@@ -9048,94 +9062,30 @@ async function saveBrainSettings() {
   toast('分类设置已保存');
 }
 
+let brainCoursesEditor = null;
 function renderBrainCourses() {
-  const list = document.getElementById('brain-course-list');
-  if (!list) return;
-  const subjects = Object.entries(state.aiRules?.subjects || {});
-  window._brainCourseNames = subjects.map(([name]) => name);
-  list.innerHTML = subjects.map(([name, item], index) => {
-    const model = brainCourseModelStatus(name);
-    const modelLabel = brainModelStateLabels[model.state] || model.state || '仅规则';
-    const assignmentLabel = brainModelStateLabels[model.assignment_state] || model.assignment_state || '仅规则';
-    return `<div class="brain-course-row" data-course-index="${index}">
-    <label class="brain-field"><span>正式课程</span><input class="brain-course-name" value="${escapeHtml(name)}"><div class="brain-course-model"><div class="brain-course-model-head"><span class="brain-model-state ${escapeHtml(model.state)}">${escapeHtml(modelLabel)}</span><small>课程样本 ${model.confirmed_samples || 0}</small></div><small>作业模型：${escapeHtml(assignmentLabel)} · ${model.assignment_labels || 0} 个节点</small></div></label>
-    <label class="brain-field"><span>确认别名 · ${(item.confirmed_aliases || []).length} 个</span><textarea class="brain-course-aliases" placeholder="每行或用逗号填写一个别名">${escapeHtml((item.confirmed_aliases || []).join('，'))}</textarea></label>
-    <label class="brain-field"><span>AI 待确认别名 · ${(item.suggested_aliases || []).length} 个</span><textarea class="brain-course-suggested" placeholder="确认前不参与分类">${escapeHtml((item.suggested_aliases || []).join('，'))}</textarea></label>
-    <label class="brain-field"><span>课程关键词 · ${(item.keywords || []).length} 个</span><textarea class="brain-course-keywords" placeholder="每行或用逗号填写一个关键词">${escapeHtml((item.keywords || []).join('，'))}</textarea></label>
-    <div class="node-actions"><label title="是否参与当前分类"><input class="brain-course-active" type="checkbox" ${item.active !== false ? 'checked' : ''}> 启用</label>${(item.suggested_aliases || []).length ? `<button onclick="confirmBrainSuggested(${index})">确认联想</button>` : ''}<button class="danger" onclick="removeBrainCourse(${index})">删除</button></div>
-  </div>`;
-  }).join('') || '<div class="empty">暂无课程。添加课程或导入专业包后会显示在这里。</div>';
-}
-
-function collectBrainCourses() {
-  const current = state.aiRules || { schema_version: 1, profile: {}, subjects: {}, types: {} };
-  const subjects = {};
-  document.querySelectorAll('#brain-course-list .brain-course-row').forEach(row => {
-    const name = row.querySelector('.brain-course-name')?.value.trim();
-    if (!name) return;
-    const old = current.subjects?.[window._brainCourseNames?.[Number(row.dataset.courseIndex)]] || {};
-    subjects[name] = {
-      active: !!row.querySelector('.brain-course-active')?.checked,
-      confirmed_aliases: parseKeywordInput(row.querySelector('.brain-course-aliases')?.value || ''),
-      suggested_aliases: parseKeywordInput(row.querySelector('.brain-course-suggested')?.value || ''),
-      keywords: parseKeywordInput(row.querySelector('.brain-course-keywords')?.value || ''),
-      assignment_types: old.assignment_types || [],
-      source: old.source || 'user_confirmed'
-    };
+  const root = document.getElementById('brain-course-editor');
+  if (!root || !window.createCourseRulesEditor) return;
+  if (!brainCoursesEditor) brainCoursesEditor = window.createCourseRulesEditor(root, {
+    escapeHtml, notify: toast,
+    rules: () => state.aiRules || { schema_version: 1, profile: {}, subjects: {}, types: {} },
+    save: changes => apiPost('/api/ai/rules/update-courses', { changes }),
+    reload: async () => {
+      const resp = await apiGet('/api/ai/rules');
+      state.aiRules = resp.rule_pack;
+      return resp.rule_pack;
+    },
+    modelLabel: name => {
+      const model = typeof brainCourseModelStatus === 'function' ? brainCourseModelStatus(name) : {};
+      return (typeof brainModelStateLabels === 'object' ? brainModelStateLabels[model.state] : '') || model.state || '仅规则';
+    },
+    onSaved: rules => { state.aiRules = rules; renderClassificationBrain(); }
   });
-  return { ...current, subjects };
+  brainCoursesEditor.sync(state.aiRules);
 }
-
-async function saveBrainCourses() {
-  const pack = collectBrainCourses();
-  const resp = await apiPost('/api/ai/rules/save', { rule_pack: pack });
-  state.aiRules = resp.rule_pack;
-  await refreshClassificationBrain();
-  toast('课程规则已保存');
-}
-
-function addBrainCourseRow(name = '') {
-  const pack = collectBrainCourses();
-  let course = String(name || '').trim();
-  if (!course) course = '新课程';
-  let unique = course;
-  let index = 2;
-  while (pack.subjects[unique]) unique = course + index++;
-  pack.subjects[unique] = { active: true, confirmed_aliases: [], suggested_aliases: [], keywords: [], assignment_types: [], source: 'user_confirmed' };
-  state.aiRules = pack;
-  renderBrainCourses();
-}
-
-function removeBrainCourse(index) {
-  const name = window._brainCourseNames?.[index];
-  if (!name || !confirm(`确定从规则包中删除课程“${name}”吗？\n不会删除已有作业和提交记录。`)) return;
-  const pack = collectBrainCourses();
-  delete pack.subjects[name];
-  state.aiRules = pack;
-  renderBrainCourses();
-}
-
-async function confirmBrainSuggested(index) {
-  const row = document.querySelector(`#brain-course-list .brain-course-row[data-course-index="${index}"]`);
-  if (!row) return;
-  const aliases = parseKeywordInput(row.querySelector('.brain-course-aliases')?.value || '');
-  const suggested = parseKeywordInput(row.querySelector('.brain-course-suggested')?.value || '');
-  if (!suggested.length) return toast('没有需要确认的联想别名');
-  const button = [...row.querySelectorAll('button')].find(item => item.textContent.includes('确认联想'));
-  if (button) { button.disabled = true; button.textContent = '保存中...'; }
-  row.querySelector('.brain-course-aliases').value = [...new Set([...aliases, ...suggested])].join('，');
-  row.querySelector('.brain-course-suggested').value = '';
-  try {
-    const pack = collectBrainCourses();
-    const resp = await apiPost('/api/ai/rules/save', { rule_pack: pack });
-    state.aiRules = resp.rule_pack;
-    renderClassificationBrain();
-    toast(`已确认并保存 ${suggested.length} 个联想别名`);
-  } catch (error) {
-    renderBrainCourses();
-    toast(`联想别名保存失败：${error.message || error}`);
-  }
-}
+function collectBrainCourses() { return brainCoursesEditor?.collectRules() || state.aiRules; }
+async function saveBrainCourses() { await brainCoursesEditor?.save(); }
+function addBrainCourseRow(name = '') { brainCoursesEditor?.add(name); }
 
 async function extractBrainKeywords() {
   const subject = document.getElementById('brain-train-subject')?.value.trim();
@@ -9162,11 +9112,11 @@ async function saveBrainTraining() {
   if (!subject) return toast('请填写正式课程名称');
   const selected = [...document.querySelectorAll('#brain-train-candidates input:checked')].map(input => state.aiTrainCandidates[Number(input.dataset.trainIndex)]).filter(Boolean);
   const pack = state.aiRules || { schema_version: 1, profile: {}, subjects: {}, types: {} };
-  const current = pack.subjects?.[subject] || { active: true, confirmed_aliases: [], suggested_aliases: [], keywords: [], assignment_types: [], source: 'subject_setup' };
+  const expected = pack.subjects?.[subject] || null;
+  const current = JSON.parse(JSON.stringify(expected || { active: true, confirmed_aliases: [], suggested_aliases: [], keywords: [], assignment_types: [], source: 'subject_setup' }));
   current.keywords = [...new Set([...(current.keywords || []), ...selected.filter(item => item.category === 'keyword').map(item => item.text)])];
   current.assignment_types = [...new Set([...(current.assignment_types || []), ...selected.filter(item => item.category === 'assignment_type').map(item => item.text)])];
-  pack.subjects = { ...(pack.subjects || {}), [subject]: current };
-  const resp = await apiPost('/api/ai/rules/save', { rule_pack: pack });
+  const resp = await apiPost('/api/ai/rules/update-courses', { changes: [{ name: subject, expected, course: current }] });
   state.aiRules = resp.rule_pack;
   clearBrainTraining();
   renderClassificationBrain();

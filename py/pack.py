@@ -24,6 +24,10 @@ BUGFIX_REQUIRED_FILES = (
     "html/static/classic.js",
     "html/static/modern.css",
     "html/static/modern.js",
+    "py/backup_paths.py",
+    "html/static/course_subjects.js",
+    "html/static/course_rules_editor.js",
+    "html/static/course_rules_editor.css",
 )
 LEGACY_UPDATE_ALIASES = {
     "server.py": "py/launcher.py",
@@ -50,6 +54,10 @@ PACK_CONFIG = {
         "html/static/classic.js",
         "html/static/modern.css",
         "html/static/modern.js",
+        "py/backup_paths.py",
+        "html/static/course_subjects.js",
+        "html/static/course_rules_editor.js",
+        "html/static/course_rules_editor.css",
         "py/pack.py",
         "py/repair_update.py",
         "requirements.txt",

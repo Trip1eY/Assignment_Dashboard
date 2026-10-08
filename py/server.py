@@ -27,6 +27,7 @@ import socket
 import ipaddress
 import hmac
 import stat
+from backup_paths import backup_directory
 from http.cookies import SimpleCookie
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -94,6 +95,7 @@ WATCHER_STATE_FILE = DATA_DIR / "watcher_state.json"
 AI_RULES_PATH = DATA_DIR / "ai_rules.json"
 AI_EXAMPLES_PATH = DATA_DIR / "ai_examples.json"
 AI_MODELS_DIR = DATA_DIR / "models"
+_ai_rules_lock = threading.RLock()
 
 _ai_training_lock = threading.RLock()
 _ai_training_cancel = threading.Event()
@@ -171,6 +173,10 @@ UPDATE_REQUIRED_FILES = (
     "html/static/classic.js",
     "html/static/modern.css",
     "html/static/modern.js",
+    "py/backup_paths.py",
+    "html/static/course_subjects.js",
+    "html/static/course_rules_editor.js",
+    "html/static/course_rules_editor.css",
 )
 LEGACY_UPDATE_ALIASES = {
     "server.py": "py/launcher.py",
@@ -999,7 +1005,62 @@ def load_ai_rules():
 def save_ai_rules(payload):
     if not HAS_AI_CLASSIFIER:
         raise RuntimeError("分类大脑模块不可用")
-    return ai_classifier.save_rule_pack(AI_RULES_PATH, payload)
+    normalized = ai_classifier.normalize_rule_pack(payload)
+    if normalized["collisions"]:
+        aliases = "、".join(item["alias"] for item in normalized["collisions"][:5])
+        raise ai_classifier.RulePackError(f"课程别名冲突：{aliases}")
+    with _ai_rules_lock:
+        return ai_classifier.save_rule_pack(AI_RULES_PATH, normalized["rule_pack"])
+
+
+def update_ai_courses(changes):
+    """Apply only selected course changes, rejecting stale edits atomically."""
+    if not HAS_AI_CLASSIFIER:
+        raise RuntimeError("分类大脑模块不可用")
+    if not isinstance(changes, list) or not changes or len(changes) > 300:
+        raise ValueError("请提供 1 至 300 门课程的修改")
+    with _ai_rules_lock:
+        pack = load_ai_rules()
+        subjects = dict(pack.get("subjects", {}))
+        seen = set()
+        for change in changes:
+            if not isinstance(change, dict):
+                raise ValueError("课程修改格式不正确")
+            name = str(change.get("name") or "").strip()
+            if not name or len(name) > 80 or name.casefold() in seen:
+                raise ValueError("课程名称为空、过长或重复")
+            seen.add(name.casefold())
+            if "expected" not in change or change["expected"] != subjects.get(name):
+                raise ValueError(f"“{name}”的规则已发生变化，请重新载入后再保存；本次修改未写入")
+            if change.get("delete"):
+                if name not in subjects:
+                    raise ValueError(f"课程“{name}”不存在")
+                del subjects[name]
+                continue
+            incoming = change.get("course")
+            if not isinstance(incoming, dict):
+                raise ValueError("课程规则格式不正确")
+            current = subjects.get(name, {})
+            course = {**current, "source": current.get("source", "user_confirmed")}
+            for field in ("active", "confirmed_aliases", "suggested_aliases", "keywords", "assignment_types"):
+                if field not in incoming:
+                    continue
+                value = incoming[field]
+                if field == "active":
+                    if not isinstance(value, bool):
+                        raise ValueError("启用状态必须是布尔值")
+                else:
+                    limit = 200 if field == "keywords" else 100
+                    if not isinstance(value, list) or len(value) > limit or any(
+                        not isinstance(word, str) or len(word.strip()) > 80 for word in value
+                    ):
+                        raise ValueError(f"“{name}”的词条格式或长度不正确")
+                course[field] = value
+            subjects[name] = course
+        if len(subjects) > 300 or len({name.casefold() for name in subjects}) != len(subjects):
+            raise ValueError("课程数量超过上限或名称重复")
+        pack["subjects"] = subjects
+        return save_ai_rules(pack)
 
 
 def ai_filename_context(cfg=None, rules=None):
@@ -5412,6 +5473,13 @@ class APIHandler(SimpleHTTPRequestHandler):
                 "note": "班级目录路径未修改",
             })
 
+        elif path == "/api/ai/rules/update-courses":
+            try:
+                rules = update_ai_courses(data.get("changes"))
+                self._json({"ok": True, "rule_pack": rules})
+            except (ValueError, RuntimeError) as exc:
+                self._json({"ok": False, "msg": str(exc)})
+
         elif path == "/api/ai/rules/save":
             if not HAS_AI_CLASSIFIER:
                 self._json({"ok": False, "msg": "分类大脑模块不可用"})
@@ -5448,8 +5516,9 @@ class APIHandler(SimpleHTTPRequestHandler):
                                 "collisions": normalized["collisions"]})
                     return
                 incoming = normalized["rule_pack"]
-                rules = ai_classifier.merge_rule_packs(load_ai_rules(), incoming) if data.get("mode", "merge") == "merge" else incoming
-                rules = save_ai_rules(rules)
+                with _ai_rules_lock:
+                    rules = ai_classifier.merge_rule_packs(load_ai_rules(), incoming) if data.get("mode", "merge") == "merge" else incoming
+                    rules = save_ai_rules(rules)
                 self._json({"ok": True, "rule_pack": rules, "summary": normalized["summary"]})
             except Exception as exc:
                 self._json({"ok": False, "msg": str(exc)})
@@ -6835,6 +6904,10 @@ class APIHandler(SimpleHTTPRequestHandler):
             "html/static/classic.js",
             "html/static/modern.css",
             "html/static/modern.js",
+            "py/backup_paths.py",
+            "html/static/course_subjects.js",
+            "html/static/course_rules_editor.js",
+            "html/static/course_rules_editor.css",
             "py/restart_helper.py",
             "py/pack.py",
             "py/repair_update.py",
@@ -7025,19 +7098,21 @@ class APIHandler(SimpleHTTPRequestHandler):
                 return
 
         # 5. 创建备份（带时间戳）
-        backup_dir = BASE_DIR / "backups"
-        backup_dir.mkdir(exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_name = f"backup_{timestamp}.zip"
-        backup_path = backup_dir / backup_name
 
         try:
+            backup_dir = backup_directory(BASE_DIR)
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / backup_name
             # 备份当前关键文件
             backup_entries = []
             for item in ["py/launcher.py", "py/server.py", "py/ai_classifier.py", "py/restart_helper.py",
                          "py/classifier_features.py", "py/classifier_trainer.py",
                          "html/dashboard.html", "html/dashboard_modern.html", "html/static/classic.css",
                          "html/static/classic.js", "html/static/modern.css", "html/static/modern.js",
+                         "py/backup_paths.py", "html/static/course_subjects.js",
+                         "html/static/course_rules_editor.js", "html/static/course_rules_editor.css",
                          "py/pack.py", "py/repair_update.py", "repair_update.bat", "CHANGELOG.md",
                          "announcement.json", "manifest.json", "启动作业追踪器.bat",
                          "更新修复工具.bat", "start.sh", "requirements.txt"]:

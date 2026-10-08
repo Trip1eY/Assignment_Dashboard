@@ -21,6 +21,8 @@ REQUIRED_FILES = (
     "py/launcher.py", "py/server.py", "html/dashboard.html", "html/dashboard_modern.html",
     "html/static/classic.css", "html/static/classic.js", "html/static/modern.css",
     "html/static/modern.js",
+    "py/backup_paths.py", "html/static/course_subjects.js",
+    "html/static/course_rules_editor.js", "html/static/course_rules_editor.css",
 )
 
 
@@ -101,14 +103,31 @@ class UpdateE2ETest(unittest.TestCase):
                 self.processes.add(int(json.loads(lock.read_text(encoding="utf-8")).get("pid", 0)))
             except Exception:
                 pass
+        # Windows can report AccessDenied for an already-exited PID. Shut down
+        # the isolated listener first, then allow its redirected log to close.
+        try:
+            json_post(f"http://127.0.0.1:{self.port}/api/server/shutdown", {})
+            wait_port_closed(self.port, timeout=5)
+        except Exception:
+            pass
         for pid in self.processes:
             if not pid:
                 continue
             try:
                 os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
-        self.temp.cleanup()
+            except OSError as exc:
+                if getattr(exc, "winerror", None) != 87:
+                    raise
+        for attempt in range(20):
+            try:
+                self.temp.cleanup()
+                break
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.15)
 
     def start_server(self):
         log = (Path(self.temp.name) / "server.log").open("wb")

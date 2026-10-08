@@ -30,6 +30,10 @@ RUNTIME_FILES = {
     "html/static/classic.js",
     "html/static/modern.css",
     "html/static/modern.js",
+    "py/backup_paths.py",
+    "html/static/course_subjects.js",
+    "html/static/course_rules_editor.js",
+    "html/static/course_rules_editor.css",
 }
 
 

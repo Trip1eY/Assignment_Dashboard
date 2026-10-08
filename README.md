@@ -291,6 +291,16 @@ python3 py/repair_update.py /完整路径/dashboard_update_v版本.zip
 
 系统会在更新前创建备份并尝试自动回滚。如果服务没有自动恢复，Windows 可重新运行“启动作业追踪器.bat”或更新修复工具；macOS/Linux 可运行 `./start.sh`，也可使用 `python3 py/repair_update.py 更新包.zip` 离线修复。
 
+### 课程规则如何关联创建作业？
+
+创建作业的课程选项来自分类大脑已保存的启用课程，同时保留已有作业的历史科目。修改规则后会同步选择栏；未保存草稿和待确认别名不会成为课程选项。
+
+课程规则支持标签编辑、逐课或全部保存、取消和浏览器草稿恢复。已保存课程名保持只读，避免破坏已有作业关联；简称请填写到确认别名。
+
+### 如何把自动备份保存到外置位置？
+
+可设置环境变量 `ASSIGNMENT_DASHBOARD_BACKUP_DIR` 为绝对目录，或在本机 `data/backup_location.json` 中设置 `directory` 为绝对目录。环境变量优先，在线更新和离线修复共用此位置。未配置时使用项目的 `backups`；已配置的外置位置不可用时会停止更新，不静默改存本机。该设置属于私有运行数据，请不要提交到公开仓库。
+
 ## 反馈与交流
 
 - 在 [Discussions](https://github.com/Trip1eY/Assignment_Dashboard/discussions) 交流使用体验和改进想法。

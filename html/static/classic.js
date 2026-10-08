@@ -1553,14 +1553,11 @@ async function packSubject(subjectGroup) {
 }
 
 async function showAddAssignment() {
-  // 填充已有的科目作为下拉建议
-  const subjects = new Set();
-  for (const a of (dashboardData?.assignments || [])) {
-    const sg = a.subject_group;
-    if (sg && sg !== '其他') subjects.add(sg);
-  }
-  document.getElementById('subject-suggestions').innerHTML = [...subjects].map(s => `<option value="${s}">`).join('');
   document.getElementById('add-assignment-form').classList.remove('hidden');
+  let rules = null;
+  try { rules = (await apiGet('/api/ai/rules')).rule_pack; } catch { /* Legacy servers retain assignment-derived suggestions. */ }
+  const subjects = assignmentCourseSubjects(rules, dashboardData?.assignments || []);
+  document.getElementById('subject-suggestions').innerHTML = subjects.map(s => `<option value="${escapeHtml(s)}">`).join('');
 }
 
 async function addAssignment() {

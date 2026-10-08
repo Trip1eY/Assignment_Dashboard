@@ -19,13 +19,14 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from backup_paths import backup_directory
 
 
 PY_DIR = Path(__file__).resolve().parent
 BASE_DIR = PY_DIR.parent
 DATA_DIR = BASE_DIR / "data"
 LOCK_PATH = DATA_DIR / "server.lock"
-BACKUP_DIR = BASE_DIR / "backups"
+BACKUP_DIR = backup_directory(BASE_DIR)
 LOG_DIR = BASE_DIR / "logs"
 
 REQUIRED_FILES = (
@@ -37,6 +38,10 @@ REQUIRED_FILES = (
     "html/static/classic.js",
     "html/static/modern.css",
     "html/static/modern.js",
+    "py/backup_paths.py",
+    "html/static/course_subjects.js",
+    "html/static/course_rules_editor.js",
+    "html/static/course_rules_editor.css",
 )
 COMMON_BACKUP_FILES = (
     "py/launcher.py",
@@ -51,6 +56,10 @@ COMMON_BACKUP_FILES = (
     "html/static/classic.js",
     "html/static/modern.css",
     "html/static/modern.js",
+    "py/backup_paths.py",
+    "html/static/course_subjects.js",
+    "html/static/course_rules_editor.js",
+    "html/static/course_rules_editor.css",
     "py/pack.py",
     "py/repair_update.py",
     "requirements.txt",
@@ -216,7 +225,7 @@ def validate_zip(zip_path):
 
 
 def create_backup(update_members):
-    BACKUP_DIR.mkdir(exist_ok=True)
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = BACKUP_DIR / f"offline_repair_backup_{timestamp}.zip"
 

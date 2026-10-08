@@ -8,6 +8,7 @@ a = Analysis(
     datas=[
         ('py/launcher.py', 'py'),
         ('py/server.py', 'py'),
+        ('py/backup_paths.py', 'py'),
         ('py/ai_classifier.py', 'py'),
         ('py/classifier_features.py', 'py'),
         ('py/classifier_trainer.py', 'py'),
@@ -18,6 +19,9 @@ a = Analysis(
         ('html/static/classic.js', 'html/static'),
         ('html/static/modern.css', 'html/static'),
         ('html/static/modern.js', 'html/static'),
+        ('html/static/course_subjects.js', 'html/static'),
+        ('html/static/course_rules_editor.js', 'html/static'),
+        ('html/static/course_rules_editor.css', 'html/static'),
         ('py/pack.py', 'py'),
         ('py/repair_update.py', 'py'),
         ('requirements.txt', '.'),

@@ -122,6 +122,13 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,.055);
   }
   input { background: rgba(12,12,11,.58); }
+  :root { --select-popup-bg: #24221f; }
+  select option, select optgroup { color: var(--text); background: var(--select-popup-bg) !important; }
+  body.ui-mecha { --select-popup-bg: #111722; }
+  body.ui-shader { --select-popup-bg: #17162a; }
+  body.ui-minimal { --select-popup-bg: #f1f5f9; }
+  body.ui-paper { --select-popup-bg: #efe2cf; }
+  body.ui-minimal select, body.ui-paper select { color-scheme: light; }
   input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
 
   .app {

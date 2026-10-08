@@ -1,0 +1,17 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const root = path.resolve(__dirname, '..');
+const file = fs.existsSync(path.join(root, 'course_subjects.js')) ? path.join(root, 'course_subjects.js') : path.join(root, 'html/static/course_subjects.js');
+const context = vm.createContext({ window: {} });
+vm.runInContext(fs.readFileSync(file, 'utf8'), context);
+const subjects = (...args) => Array.from(context.window.assignmentCourseSubjects(...args));
+const rules = {subjects: {'启用课程': {active: true, suggested_aliases: ['建议别名']}, '停用课程': {active: false}, 'DSP': {}}};
+assert.deepEqual(subjects(rules), ['启用课程', 'DSP']);
+assert.deepEqual(subjects(null, [{subject: '历史课程'}]), ['历史课程']);
+assert.deepEqual(subjects(rules, [{subject_group: 'dsp'}, {subject: '历史课程'}, {subject: '其他'}]), ['启用课程', 'DSP', '历史课程']);
+assert.deepEqual(subjects(rules, [], ['当前选择', '当前选择']), ['启用课程', 'DSP', '当前选择']);
+assert.equal(subjects(rules).includes('建议别名'), false);
+assert.equal(subjects(rules).includes('课程报告'), false);
+console.log('COURSE_SUBJECTS_OK: 6 assertions');

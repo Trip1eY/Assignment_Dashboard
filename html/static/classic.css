@@ -18,6 +18,8 @@
   }
 
   * { margin:0; padding:0; box-sizing:border-box; }
+  select { color-scheme: dark; }
+  select option, select optgroup { color: var(--text); background: var(--card-bg); }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
     background: var(--bg);
