@@ -1804,38 +1804,12 @@
     box-shadow: 0 18px 42px color-mix(in srgb, var(--primary) 20%, transparent), inset 0 1px 0 rgba(255,255,255,.18);
     overflow: hidden;
   }
-  .announcement-icon::before {
-    content: "";
-    position: absolute;
-    inset: 13px 17px 18px;
-    border: 2px solid rgba(255,255,255,.72);
-    border-radius: 12px;
-    transform: skewY(-7deg);
+  .announcement-icon .announcement-bell {
+    display: block;
+    width: 36px;
+    height: 36px;
+    color: var(--text);
   }
-  .announcement-icon::after {
-    content: "";
-    position: absolute;
-    left: 24px;
-    right: 24px;
-    bottom: 14px;
-    height: 10px;
-    border-radius: 0 0 9px 9px;
-    background: color-mix(in srgb, var(--accent) 76%, white 8%);
-    box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent);
-    animation: annBellPulse 2.8s ease-in-out infinite;
-  }
-  .announcement-icon span {
-    position: absolute;
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
-    background: #fff;
-    box-shadow: 0 0 14px rgba(255,255,255,.7);
-    animation: annSignal 2.9s ease-in-out infinite;
-  }
-  .announcement-icon span:nth-child(1) { top: 16px; right: 16px; }
-  .announcement-icon span:nth-child(2) { left: 16px; bottom: 22px; animation-delay: .35s; }
-  .announcement-icon span:nth-child(3) { right: 22px; bottom: 22px; animation-delay: .7s; }
   .announcement-title h3 { margin: 6px 0 6px; font-size: 26px; }
   .announcement-title p { margin: 0; color: var(--muted); line-height: 1.7; font-size: 14px; }
   .announcement-layout {
@@ -5728,6 +5702,60 @@
       text-align: center;
     }
   }
+  /* Approved management layout: keep production actions and other groups intact. */
+  #page-manage .settings-grid:has(> .manage-preview-card:not([hidden])) { align-items: stretch; }
+  #page-manage .manage-preview-card,
+  #page-manage .manage-update-card[data-manage-group="system"] {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-width: 0;
+    margin-bottom: 0;
+  }
+  #page-manage .manage-preview-card > .card-foot:last-child,
+  #page-manage .manage-update-card[data-manage-group="system"] > .card-foot:last-child {
+    margin-top: auto;
+    padding-top: 14px;
+  }
+  body.developer-mode #page-manage .manage-server-card:not([hidden]) {
+    display: grid !important;
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0,1fr) auto;
+    align-items: center;
+    gap: 20px;
+    height: auto;
+    min-height: 92px;
+    margin-bottom: 0;
+  }
+  #page-manage .manage-server-card .section-head {
+    display: flex;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  #page-manage .manage-server-card .file-actions { margin: 0; flex-wrap: wrap; }
+  #page-manage .manage-server-card .pill,
+  #page-manage .manage-update-card[data-manage-group="system"] .card-foot { overflow-wrap: anywhere; }
+  @media (max-width: 900px) {
+    #page-manage .settings-grid:has(> .manage-preview-card:not([hidden])) { grid-template-columns: minmax(0,1fr); }
+    body.developer-mode #page-manage .manage-server-card:not([hidden]) { grid-template-columns: minmax(0,1fr); gap: 16px; }
+  }
+  @media (max-width: 720px), (orientation: portrait) and (max-width: 900px) {
+    #page-manage #manage-workspace-tabs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); overflow: visible; }
+    #page-manage #manage-workspace-tabs button { min-width: 0; white-space: nowrap; font-size: 12px; justify-content: flex-start; }
+    #page-manage .announcement-hero { grid-template-columns: auto minmax(0,1fr); gap: 14px; }
+    #page-manage .announcement-title { min-width: 0; }
+    #page-manage .announcement-hero > button { grid-column: 1 / -1; justify-self: start; }
+    #page-manage .announcement-icon { width: 56px; height: 56px; border-radius: 18px; }
+    #page-manage .manage-server-card .section-head { align-items: center; }
+  }
+  @media (max-width: 400px) {
+    #page-manage .manage-server-card .file-actions { gap: 8px; }
+    #page-manage .manage-server-card button { flex: 1; padding: 8px; }
+  }
 </style>
 </head>
 <body>
@@ -6336,7 +6364,7 @@
           <div class="grid developer-tools-grid">
           <div class="card announcement-console manage-card manage-broadcast-card">
             <div class="announcement-hero">
-              <div class="announcement-icon" aria-hidden="true"><span></span><span></span><span></span></div>
+              <div class="announcement-icon" aria-hidden="true"><svg class="announcement-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg></div>
               <div class="announcement-title">
                 <span class="tag blue">Broadcast Desk</span>
                 <h3>公告管理</h3>
@@ -6370,7 +6398,8 @@
                 </div>
                 <textarea class="textarea" id="modern-ann-content" placeholder="公告内容，支持简单 Markdown"></textarea>
                 <div class="file-actions">
-                  <button class="primary" onclick="addModernAnnouncement()">加入公告列表</button>
+                  <button class="primary" id="modern-ann-save" onclick="addModernAnnouncement()">加入公告列表</button>
+                  <button id="modern-ann-cancel" style="display:none" onclick="clearModernAnnouncementForm()">取消编辑</button>
                   <button onclick="previewModernAnnouncements()">预览公告</button>
                   <button class="danger" onclick="clearModernAnnouncements()">清空列表</button>
                 </div>
@@ -9967,6 +9996,11 @@ function renderModernAnnouncementList() {
   </div>`).join('') || '<div class="empty">暂无公告。添加公告后可随更新包一起发布。</div>';
 }
 function clearModernAnnouncementForm() {
+  state.editingAnnouncement = null;
+  const saveButton = document.getElementById('modern-ann-save');
+  const cancelButton = document.getElementById('modern-ann-cancel');
+  if (saveButton) saveButton.textContent = '加入公告列表';
+  if (cancelButton) cancelButton.style.display = 'none';
   ['modern-ann-title', 'modern-ann-content'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
@@ -9980,35 +10014,50 @@ function addModernAnnouncement() {
   const content = document.getElementById('modern-ann-content')?.value?.trim();
   if (!title) return toast('请填写公告标题');
   if (!content) return toast('请填写公告内容');
-  state.announcements.unshift({ id: 'ann_' + Date.now(), title, type, version, author, content, timestamp: new Date().toISOString() });
+  const editing = state.editingAnnouncement;
+  const index = editing ? state.announcements.indexOf(editing) : -1;
+  if (editing && index < 0) return toast('原公告已变化，请取消编辑后重试');
+  const announcement = { id: editing?.id || 'ann_' + Date.now(), title, type, version, author, content, timestamp: new Date().toISOString() };
+  if (editing) state.announcements[index] = announcement;
+  else state.announcements.unshift(announcement);
   clearModernAnnouncementForm();
   renderModernAnnouncementList();
-  toast('公告已加入列表');
+  toast(editing ? '公告修改已保存' : '公告已加入列表');
 }
 function editModernAnnouncement(index) {
   const ann = state.announcements?.[index];
   if (!ann) return;
+  if (state.editingAnnouncement) return toast('请先保存修改或取消编辑');
+  state.editingAnnouncement = ann;
   document.getElementById('modern-ann-title').value = ann.title || '';
   document.getElementById('modern-ann-type').value = ann.type || 'notice';
   document.getElementById('modern-ann-version').value = ann.version || '';
   document.getElementById('modern-ann-author').value = ann.author || '项目开发者';
   document.getElementById('modern-ann-content').value = ann.content || '';
   updateModernAnnTypePicker();
-  state.announcements.splice(index, 1);
+  const saveButton = document.getElementById('modern-ann-save');
+  const cancelButton = document.getElementById('modern-ann-cancel');
+  if (saveButton) saveButton.textContent = '保存修改';
+  if (cancelButton) cancelButton.style.display = '';
   renderModernAnnouncementList();
 }
 function removeModernAnnouncement(index) {
   if (!confirm('确定删除这条公告吗？')) return;
+  if (state.announcements[index] === state.editingAnnouncement) clearModernAnnouncementForm();
   state.announcements.splice(index, 1);
   renderModernAnnouncementList();
 }
 function clearModernAnnouncements() {
   if ((state.announcements || []).length && !confirm('确定清空公告列表？')) return;
   state.announcements = [];
+  clearModernAnnouncementForm();
   renderModernAnnouncementList();
 }
 async function loadExistingAnnouncementsModern() {
+  if (hasModernAnnouncementDraft()) return toast('请先保存公告或取消编辑');
   const data = await apiGet('/api/announcements');
+  if (hasModernAnnouncementDraft()) return toast('请先保存公告或取消编辑');
+  if (!data.ok || !Array.isArray(data.announcements)) return toast('加载公告失败，当前列表未改变');
   state.announcements = (data.announcements || []).map((a, i) => ({
     id: a.id || 'ann_loaded_' + i,
     title: a.title || '未命名公告',
@@ -10038,7 +10087,13 @@ function previewModernAnnouncements() {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 }
+function hasModernAnnouncementDraft() {
+  return !!(state.editingAnnouncement ||
+    document.getElementById('modern-ann-title')?.value?.trim() ||
+    document.getElementById('modern-ann-content')?.value?.trim());
+}
 async function buildModernUpdatePackage() {
+  if (hasModernAnnouncementDraft()) return toast('有未保存的公告，请先加入列表、保存修改或取消编辑');
   const version = document.getElementById('modern-pkg-version')?.value?.trim();
   const result = document.getElementById('modern-pkg-result');
   if (!version) return toast('请填写更新版本号');

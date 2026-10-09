@@ -155,6 +155,18 @@ def create_update_package(version=None, file_list=None, output_name=None, target
     resolved_platform = target_platform or sys.platform
     file_list = files_for_platform(file_list, resolved_platform)
     
+    # 公告版本必须与本次更新一致；只修改包内副本，不改源文件。
+    ann_path = os.path.join(BASE_DIR, "announcement.json")
+    announcement = None
+    if os.path.isfile(ann_path) and not should_exclude("announcement.json", PACK_CONFIG["exclude_patterns"]):
+        with open(ann_path, "r", encoding="utf-8-sig") as f:
+            announcement = json.load(f)
+        if (not isinstance(announcement, dict)
+                or not isinstance(announcement.get("announcements"), list)
+                or any(not isinstance(item, dict) for item in announcement["announcements"])):
+            raise ValueError("announcement.json 必须是包含 announcements 对象数组的 JSON")
+        announcement["version"] = str(version)
+
     # 输出目录
     output_dir = os.path.join(BASE_DIR, PACK_CONFIG["output_dir"])
     os.makedirs(output_dir, exist_ok=True)
@@ -166,7 +178,7 @@ def create_update_package(version=None, file_list=None, output_name=None, target
             zip_name += ".zip"
     else:
         date_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_name = f"homework_tracker_v{version}_{date_str}.zip"
+        zip_name = f"dashboard_update_v{version}_{date_str}.zip"
     
     zip_path = os.path.join(output_dir, zip_name)
     
@@ -179,7 +191,7 @@ def create_update_package(version=None, file_list=None, output_name=None, target
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         # 添加指定文件
         for fname in file_list:
-            if fname == "manifest.json":
+            if fname in ("manifest.json", "announcement.json"):
                 # 版本清单由本次打包参数生成，避免沿用旧清单。
                 continue
             fpath = os.path.join(BASE_DIR, fname)
@@ -222,13 +234,11 @@ def create_update_package(version=None, file_list=None, output_name=None, target
                 files_added += 1
         
         # 添加公告文件（如果存在）
-        ann_path = os.path.join(BASE_DIR, "announcement.json")
-        if os.path.exists(ann_path):
-            if not should_exclude("announcement.json", PACK_CONFIG["exclude_patterns"]):
-                zf.write(ann_path, "announcement.json")
-                size_kb = os.path.getsize(ann_path) / 1024
-                print(f"  + announcement.json ({size_kb:.1f} KB) - 公告文件")
-                files_added += 1
+        if announcement is not None:
+            ann_bytes = json.dumps(announcement, ensure_ascii=False, indent=2).encode("utf-8")
+            zf.writestr("announcement.json", ann_bytes)
+            print(f"  + announcement.json ({len(ann_bytes) / 1024:.1f} KB) - 公告文件")
+            files_added += 1
         else:
             print(f"  ! announcement.json 不存在，跳过（可选）")
 
@@ -241,7 +251,7 @@ def create_update_package(version=None, file_list=None, output_name=None, target
                 legacy_name for legacy_name, source_name in LEGACY_UPDATE_ALIASES.items()
                 if source_name in file_list
             ],
-            "has_announcement": os.path.exists(ann_path),
+            "has_announcement": announcement is not None,
         }
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
     
@@ -256,8 +266,8 @@ def create_update_package(version=None, file_list=None, output_name=None, target
         print(f"  排除: {excluded_count} 个文件")
     
     # 检查公告
-    has_ann, ann_count = check_announcement()
-    if has_ann:
+    ann_count = len(announcement["announcements"]) if announcement is not None else 0
+    if announcement is not None:
         print(f"  公告: {ann_count} 条公告已包含")
     else:
         print(f"  提示: 未找到 announcement.json，如需发布公告请先创建")

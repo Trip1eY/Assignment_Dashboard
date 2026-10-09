@@ -1451,38 +1451,12 @@
     box-shadow: 0 18px 42px color-mix(in srgb, var(--primary) 20%, transparent), inset 0 1px 0 rgba(255,255,255,.18);
     overflow: hidden;
   }
-  .announcement-icon::before {
-    content: "";
-    position: absolute;
-    inset: 13px 17px 18px;
-    border: 2px solid rgba(255,255,255,.72);
-    border-radius: 12px;
-    transform: skewY(-7deg);
+  .announcement-icon .announcement-bell {
+    display: block;
+    width: 36px;
+    height: 36px;
+    color: var(--text);
   }
-  .announcement-icon::after {
-    content: "";
-    position: absolute;
-    left: 24px;
-    right: 24px;
-    bottom: 14px;
-    height: 10px;
-    border-radius: 0 0 9px 9px;
-    background: color-mix(in srgb, var(--accent) 76%, white 8%);
-    box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent);
-    animation: annBellPulse 2.8s ease-in-out infinite;
-  }
-  .announcement-icon span {
-    position: absolute;
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
-    background: #fff;
-    box-shadow: 0 0 14px rgba(255,255,255,.7);
-    animation: annSignal 2.9s ease-in-out infinite;
-  }
-  .announcement-icon span:nth-child(1) { top: 16px; right: 16px; }
-  .announcement-icon span:nth-child(2) { left: 16px; bottom: 22px; animation-delay: .35s; }
-  .announcement-icon span:nth-child(3) { right: 22px; bottom: 22px; animation-delay: .7s; }
   .announcement-title h3 { margin: 6px 0 6px; font-size: 26px; }
   .announcement-title p { margin: 0; color: var(--muted); line-height: 1.7; font-size: 14px; }
   .announcement-layout {
@@ -3759,4 +3733,58 @@
     .page-head { display: block; }
     .page-head h2 { font-size: 30px; }
     .hero h2 { font-size: 38px; }
+  }
+  /* Approved management layout: keep production actions and other groups intact. */
+  #page-manage .settings-grid:has(> .manage-preview-card:not([hidden])) { align-items: stretch; }
+  #page-manage .manage-preview-card,
+  #page-manage .manage-update-card[data-manage-group="system"] {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-width: 0;
+    margin-bottom: 0;
+  }
+  #page-manage .manage-preview-card > .card-foot:last-child,
+  #page-manage .manage-update-card[data-manage-group="system"] > .card-foot:last-child {
+    margin-top: auto;
+    padding-top: 14px;
+  }
+  body.developer-mode #page-manage .manage-server-card:not([hidden]) {
+    display: grid !important;
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0,1fr) auto;
+    align-items: center;
+    gap: 20px;
+    height: auto;
+    min-height: 92px;
+    margin-bottom: 0;
+  }
+  #page-manage .manage-server-card .section-head {
+    display: flex;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  #page-manage .manage-server-card .file-actions { margin: 0; flex-wrap: wrap; }
+  #page-manage .manage-server-card .pill,
+  #page-manage .manage-update-card[data-manage-group="system"] .card-foot { overflow-wrap: anywhere; }
+  @media (max-width: 900px) {
+    #page-manage .settings-grid:has(> .manage-preview-card:not([hidden])) { grid-template-columns: minmax(0,1fr); }
+    body.developer-mode #page-manage .manage-server-card:not([hidden]) { grid-template-columns: minmax(0,1fr); gap: 16px; }
+  }
+  @media (max-width: 720px), (orientation: portrait) and (max-width: 900px) {
+    #page-manage #manage-workspace-tabs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); overflow: visible; }
+    #page-manage #manage-workspace-tabs button { min-width: 0; white-space: nowrap; font-size: 12px; justify-content: flex-start; }
+    #page-manage .announcement-hero { grid-template-columns: auto minmax(0,1fr); gap: 14px; }
+    #page-manage .announcement-title { min-width: 0; }
+    #page-manage .announcement-hero > button { grid-column: 1 / -1; justify-self: start; }
+    #page-manage .announcement-icon { width: 56px; height: 56px; border-radius: 18px; }
+    #page-manage .manage-server-card .section-head { align-items: center; }
+  }
+  @media (max-width: 400px) {
+    #page-manage .manage-server-card .file-actions { gap: 8px; }
+    #page-manage .manage-server-card button { flex: 1; padding: 8px; }
   }

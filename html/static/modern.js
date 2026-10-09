@@ -2390,6 +2390,11 @@ function renderModernAnnouncementList() {
   </div>`).join('') || '<div class="empty">暂无公告。添加公告后可随更新包一起发布。</div>';
 }
 function clearModernAnnouncementForm() {
+  state.editingAnnouncement = null;
+  const saveButton = document.getElementById('modern-ann-save');
+  const cancelButton = document.getElementById('modern-ann-cancel');
+  if (saveButton) saveButton.textContent = '加入公告列表';
+  if (cancelButton) cancelButton.style.display = 'none';
   ['modern-ann-title', 'modern-ann-content'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
@@ -2403,35 +2408,50 @@ function addModernAnnouncement() {
   const content = document.getElementById('modern-ann-content')?.value?.trim();
   if (!title) return toast('请填写公告标题');
   if (!content) return toast('请填写公告内容');
-  state.announcements.unshift({ id: 'ann_' + Date.now(), title, type, version, author, content, timestamp: new Date().toISOString() });
+  const editing = state.editingAnnouncement;
+  const index = editing ? state.announcements.indexOf(editing) : -1;
+  if (editing && index < 0) return toast('原公告已变化，请取消编辑后重试');
+  const announcement = { id: editing?.id || 'ann_' + Date.now(), title, type, version, author, content, timestamp: new Date().toISOString() };
+  if (editing) state.announcements[index] = announcement;
+  else state.announcements.unshift(announcement);
   clearModernAnnouncementForm();
   renderModernAnnouncementList();
-  toast('公告已加入列表');
+  toast(editing ? '公告修改已保存' : '公告已加入列表');
 }
 function editModernAnnouncement(index) {
   const ann = state.announcements?.[index];
   if (!ann) return;
+  if (state.editingAnnouncement) return toast('请先保存修改或取消编辑');
+  state.editingAnnouncement = ann;
   document.getElementById('modern-ann-title').value = ann.title || '';
   document.getElementById('modern-ann-type').value = ann.type || 'notice';
   document.getElementById('modern-ann-version').value = ann.version || '';
   document.getElementById('modern-ann-author').value = ann.author || '系统管理员';
   document.getElementById('modern-ann-content').value = ann.content || '';
   updateModernAnnTypePicker();
-  state.announcements.splice(index, 1);
+  const saveButton = document.getElementById('modern-ann-save');
+  const cancelButton = document.getElementById('modern-ann-cancel');
+  if (saveButton) saveButton.textContent = '保存修改';
+  if (cancelButton) cancelButton.style.display = '';
   renderModernAnnouncementList();
 }
 function removeModernAnnouncement(index) {
   if (!confirm('确定删除这条公告吗？')) return;
+  if (state.announcements[index] === state.editingAnnouncement) clearModernAnnouncementForm();
   state.announcements.splice(index, 1);
   renderModernAnnouncementList();
 }
 function clearModernAnnouncements() {
   if ((state.announcements || []).length && !confirm('确定清空公告列表？')) return;
   state.announcements = [];
+  clearModernAnnouncementForm();
   renderModernAnnouncementList();
 }
 async function loadExistingAnnouncementsModern() {
+  if (hasModernAnnouncementDraft()) return toast('请先保存公告或取消编辑');
   const data = await apiGet('/api/announcements');
+  if (hasModernAnnouncementDraft()) return toast('请先保存公告或取消编辑');
+  if (!data.ok || !Array.isArray(data.announcements)) return toast('加载公告失败，当前列表未改变');
   state.announcements = (data.announcements || []).map((a, i) => ({
     id: a.id || 'ann_loaded_' + i,
     title: a.title || '未命名公告',
@@ -2461,7 +2481,13 @@ function previewModernAnnouncements() {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 }
+function hasModernAnnouncementDraft() {
+  return !!(state.editingAnnouncement ||
+    document.getElementById('modern-ann-title')?.value?.trim() ||
+    document.getElementById('modern-ann-content')?.value?.trim());
+}
 async function buildModernUpdatePackage() {
+  if (hasModernAnnouncementDraft()) return toast('有未保存的公告，请先加入列表、保存修改或取消编辑');
   const version = document.getElementById('modern-pkg-version')?.value?.trim();
   const result = document.getElementById('modern-pkg-result');
   if (!version) return toast('请填写更新版本号');
