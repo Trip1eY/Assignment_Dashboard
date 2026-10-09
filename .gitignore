@@ -25,6 +25,9 @@ credentials.json
 # 打包产物
 build/
 dist/
+output/
+releases/
+.playwright-cli/
 
 # 系统文件
 Thumbs.db

@@ -18,6 +18,7 @@ import repair_update
 
 
 RUNTIME_FILES = {
+    "py/github_updates.py",
     "py/launcher.py",
     "py/server.py",
     "py/ai_classifier.py",

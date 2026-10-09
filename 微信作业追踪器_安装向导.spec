@@ -6,6 +6,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
+        ('py/github_updates.py', 'py'),
+        ('announcement.json', '.'),
         ('py/launcher.py', 'py'),
         ('py/server.py', 'py'),
         ('py/backup_paths.py', 'py'),
@@ -48,7 +50,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='作业追踪器v0.1.1',
+    name='作业追踪器v0.1.3',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

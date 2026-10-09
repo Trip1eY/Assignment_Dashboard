@@ -16,6 +16,7 @@ import shutil
 PY_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PY_DIR)
 BUGFIX_REQUIRED_FILES = (
+    "py/github_updates.py",
     "py/launcher.py",
     "py/server.py",
     "html/dashboard.html",
@@ -45,6 +46,7 @@ LEGACY_UPDATE_ALIASES = {
 # 打包配置
 PACK_CONFIG = {
     "include_files": [
+        "py/github_updates.py",
         "py/launcher.py",
         "py/server.py",
         "py/ai_classifier.py",
@@ -108,9 +110,9 @@ def get_version():
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
-        return config.get("version", "1.0.0")
+        return config.get("version", "0.1.3")
     except:
-        return "1.0.0"
+        return "0.1.3"
 
 
 def check_announcement():

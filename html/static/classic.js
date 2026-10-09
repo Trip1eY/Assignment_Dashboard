@@ -2591,8 +2591,13 @@ async function downloadGithubUpdate() {
   if (!confirm(`发现 v${info.latest_version}，确定下载并加载更新包吗？\n\n${info.asset.name}`)) return;
   try {
     if (result) result.textContent = '正在下载 GitHub 更新包...';
-    const resp = await fetch(info.asset.download_url);
-    if (!resp.ok) throw new Error(`下载失败（HTTP ${resp.status}）`);
+    const params = new URLSearchParams({version: info.latest_version, name: info.asset.name});
+    const resp = await fetch('/api/update/download?' + params.toString());
+    if (!resp.ok) {
+      let message = `下载失败（HTTP ${resp.status}）`;
+      try { message = (await resp.json()).msg || message; } catch (e) {}
+      throw new Error(message);
+    }
     const blob = await resp.blob();
     await handleUpdateFile(new File([blob], info.asset.name, { type: 'application/zip' }));
   } catch (e) {
@@ -2641,6 +2646,7 @@ async function handleUpdateFile(file) {
     showUpdateResult(false, '请上传 .zip 格式的更新包');
     return;
   }
+  if (!confirm(`确定加载更新包并重启服务吗？\n\n${file.name}`)) return;
   
   const progressDiv = document.getElementById('update-progress');
   const statusText = document.getElementById('update-status-text');

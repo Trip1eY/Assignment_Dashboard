@@ -20,13 +20,15 @@ import uuid
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import threading
+import re
+from backup_paths import backup_directory
 
 # ============================================================
 # 常量配置
 # ============================================================
 
 APP_NAME = "作业追踪器"
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.3"
 APP_PORT = 18765
 AUTHOR = "项目贡献者"
 SUPPORT_URL = "https://github.com/Trip1eY/Assignment_Dashboard/issues/new/choose"
@@ -59,6 +61,7 @@ FILE_TYPE_GROUPS = {
 
 # 需要安装到目标目录的文件列表
 INSTALL_FILES = [
+    "py/github_updates.py",
     "py/launcher.py",
     "py/server.py",
     "py/ai_classifier.py",
@@ -320,7 +323,7 @@ class InstallerWizard:
         return os.path.join(install_dir or self.install_dir, "homework")
 
     def _default_scan_dirs(self, install_dir=None, class_name=None):
-        dirs = [self._default_experiment_dir(class_name), self._default_homework_dir(install_dir)]
+        dirs = [self._default_homework_dir(install_dir)]
         result = []
         for d in dirs:
             if d and d not in result:
@@ -336,11 +339,13 @@ class InstallerWizard:
             raise ValueError("安装目录不能直接选择桌面、用户目录、下载目录或系统目录，请选择一个专用文件夹。")
         return abs_dir
 
-    def _new_install_journal(self):
+    def _new_install_journal(self, install_dir=None):
+        backup_root = backup_directory(install_dir or self.install_dir)
+        backup_root.mkdir(parents=True, exist_ok=True)
         return {
             "created_dirs": [],
             "files": {},
-            "backup_dir": tempfile.mkdtemp(prefix="assignment_dashboard_installer_rollback_"),
+            "backup_dir": tempfile.mkdtemp(prefix="installer_rollback_", dir=str(backup_root)),
         }
 
     def _remember_dir(self, journal, path):
@@ -518,8 +523,10 @@ class InstallerWizard:
         for cmd in candidates:
             try:
                 result = subprocess.run([cmd, "--version"], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    return cmd, (result.stdout.strip() or result.stderr.strip())
+                version = result.stdout.strip() or result.stderr.strip()
+                match = re.search(r"Python (\d+)\.(\d+)", version)
+                if result.returncode == 0 and match and tuple(map(int, match.groups())) >= (3, 10):
+                    return shutil.which(cmd) or cmd, version
             except Exception:
                 continue
         return None, None
@@ -780,7 +787,7 @@ class InstallerWizard:
         
         tk.Label(
             scroll_frame,
-            text="💡 微信接收文件会自动发现；这里用于“扫描已有文件”，默认包含 桌面\\班级\\公示文件夹 和安装目录 homework",
+            text="💡 微信接收文件会自动发现；默认扫描安装目录 homework。同步文件夹用于保存副本和历史回填，不参与实时监听。",
             font=("Segoe UI", 9),
             fg=self.colors["text_muted"],
             bg=self.colors["bg"]
@@ -790,7 +797,7 @@ class InstallerWizard:
         self.scan_dirs_list_frame = tk.Frame(scroll_frame, bg=self.colors["bg"])
         self.scan_dirs_list_frame.pack(fill=tk.X)
         
-        # 初始添加默认扫描目录：公示/作业目录 + 本地手动投递目录
+        # 默认只监听本地手动投递目录；同步副本不再次参与监听。
         if not self.scan_dirs:
             self.scan_dirs = self._default_scan_dirs(self.install_dir, self._get_class_name_value())
         self._render_scan_dirs()
@@ -1347,7 +1354,17 @@ class InstallerWizard:
             install_dir = self._ensure_safe_install_dir(install_dir)
             data_dir = os.path.join(install_dir, "data")
             scan_dirs = [os.path.abspath(d) for d in scan_dirs if d]
-            journal = self._new_install_journal()
+            missing = [name for name in INSTALL_FILES if not os.path.isfile(get_resource_path(name))]
+            if missing:
+                raise ValueError("安装包缺少必要文件：" + ", ".join(missing))
+            existing_path = os.path.join(data_dir, "config.json")
+            existing_config = None
+            if os.path.exists(existing_path):
+                with open(existing_path, "r", encoding="utf-8") as f:
+                    existing_config = json.load(f)
+                if not isinstance(existing_config, dict):
+                    raise ValueError("原配置格式无效，已停止安装以保护数据")
+            journal = self._new_install_journal(install_dir)
             total_steps = 5
             if not python_ok:
                 total_steps = 6
@@ -1358,9 +1375,10 @@ class InstallerWizard:
             
             self._remember_dir(journal, install_dir)
             self._remember_dir(journal, data_dir)
-            class_folder = os.path.join(os.path.expanduser("~"), "Desktop", class_name)
-            organized_dir = os.path.join(class_folder, "已收作业")
-            experiment_dir = os.path.join(class_folder, "实验")
+            prior = existing_config or {}
+            class_folder = prior.get("class_folder") or os.path.join(os.path.expanduser("~"), "Desktop", class_name)
+            organized_dir = prior.get("organized_dir") or os.path.join(class_folder, "已收作业")
+            experiment_dir = prior.get("experiment_dir") or os.path.join(class_folder, "实验")
             self._remember_dir(journal, class_folder)
             self._remember_dir(journal, organized_dir)
             self._remember_dir(journal, experiment_dir)
@@ -1372,7 +1390,7 @@ class InstallerWizard:
             self._log(f"安装目录: {install_dir}", "SUCCESS")
             self._log(f"数据目录: {data_dir}", "SUCCESS")
             self._log(f"已收作业目录: {organized_dir}", "SUCCESS")
-            self._log(f"公示/作业目录: {experiment_dir}", "SUCCESS")
+            self._log(f"同步文件夹: {experiment_dir}", "SUCCESS")
             for d in scan_dirs:
                 self._log(f"扫描目录: {d}", "SUCCESS")
             
@@ -1404,7 +1422,17 @@ class InstallerWizard:
                     self._set_progress(35, "正在解压 Python...")
                     self._log("解压 Python 嵌入版...")
                     with zipfile.ZipFile(zip_path, "r") as zf:
-                        zf.extractall(python_dir)
+                        for info in zf.infolist():
+                            target = os.path.abspath(os.path.join(python_dir, info.filename))
+                            if os.path.commonpath([target, os.path.abspath(python_dir)]) != os.path.abspath(python_dir):
+                                raise ValueError("Python 下载包包含非法路径")
+                            if info.is_dir():
+                                self._remember_dir(journal, target)
+                                continue
+                            self._remember_dir(journal, os.path.dirname(target))
+                            self._remember_file_before_write(journal, target)
+                            with open(target, "wb") as output:
+                                output.write(zf.read(info))
                     self._log("Python 嵌入版安装完成", "SUCCESS")
                     
                     # 清理
@@ -1412,22 +1440,22 @@ class InstallerWizard:
                     
                 except urllib.error.URLError as e:
                     self._log(f"下载 Python 失败: {e}", "ERROR")
-                    self._log("请手动安装 Python 3.8+ 后重试", "WARN")
+                    self._log("请手动安装 Python 3.10+ 后重试", "WARN")
                     self._log("下载地址: https://www.python.org/downloads/", "WARN")
                     self._log("正在回滚安装...", "WARN")
                     self._rollback(install_dir, journal)
-                    self.root.after(0, lambda: self._install_failed(
+                    self.root.after(0, lambda error=str(e): self._install_failed(
                         "Python 下载失败",
-                        f"无法从 {PYTHON_EMBED_URL} 下载\n\n请检查网络连接或手动安装 Python 3.8+\n下载地址: https://www.python.org/downloads/"
+                        f"无法从 {PYTHON_EMBED_URL} 下载\n\n请检查网络连接或手动安装 Python 3.10+\n下载地址: https://www.python.org/downloads/"
                     ))
                     return
                 except Exception as e:
                     self._log(f"安装 Python 失败: {e}", "ERROR")
                     self._log("正在回滚安装...", "WARN")
                     self._rollback(install_dir, journal)
-                    self.root.after(0, lambda: self._install_failed(
+                    self.root.after(0, lambda error=str(e): self._install_failed(
                         "Python 安装失败",
-                        f"解压或安装 Python 时出错: {str(e)}\n\n请手动安装 Python 3.8+"
+                        f"解压或安装 Python 时出错: {error}\n\n请手动安装 Python 3.10+"
                     ))
                     return
             
@@ -1468,6 +1496,10 @@ class InstallerWizard:
                 "version": APP_VERSION
             }
             
+            if existing_config is not None:
+                config = dict(existing_config)
+                config["version"] = APP_VERSION
+                self._log("保留已有名单、提交记录、课程规则和配置，仅更新程序版本", "SUCCESS")
             config_path = os.path.join(data_dir, "config.json")
             self._write_json_file(journal, config_path, config)
             students_path = os.path.join(data_dir, "students.json")
@@ -1495,8 +1527,16 @@ class InstallerWizard:
                     self._copy_install_file(journal, src, dst)
                     self._log(f"  ✓ {fname}", "SUCCESS")
                 else:
-                    self._log(f"  ! {fname} 源文件未找到，跳过", "WARN")
+                    raise ValueError(f"安装资源在复制时缺失：{fname}")
             
+            announcement_source = get_resource_path("announcement.json")
+            if os.path.isfile(announcement_source):
+                self._copy_install_file(journal, announcement_source, os.path.join(install_dir, "announcement.json"))
+            has_announcement = os.path.isfile(os.path.join(install_dir, "announcement.json"))
+            self._write_json_file(journal, os.path.join(install_dir, "manifest.json"), {
+                "app": "Assignment_Dashboard", "version": APP_VERSION,
+                "platform": "win32", "files": INSTALL_FILES, "has_announcement": has_announcement,
+            })
             # ====== 步骤5: 创建BAT脚本 ======
             step += 1
             progress_pct = step * 100 // total_steps
@@ -1599,7 +1639,7 @@ class InstallerWizard:
                 '\r\n'
                 ':python_missing\r\n'
                 'echo [ERROR] Python was not found.\r\n'
-                'echo Install Python 3.8+ or put embedded Python in .\\python\\python.exe\r\n'
+                'echo Install Python 3.10+ or put embedded Python in .\\python\\python.exe\r\n'
                 'echo.\r\n'
                 'pause\r\n'
                 'exit /b 1\r\n'
@@ -1612,8 +1652,8 @@ class InstallerWizard:
                 'goto loop\r\n'
                 )
 
-            install_python_cmd = 'python'
-            desktop_python_cmd = 'python'
+            install_python_cmd = getattr(self, "_python_cmd", "python")
+            desktop_python_cmd = install_python_cmd
             embedded_python = os.path.join(install_dir, "python", "python.exe")
             if os.path.exists(embedded_python):
                 install_python_cmd = "%~dp0python\\python.exe"
@@ -1662,9 +1702,9 @@ class InstallerWizard:
             self._log("正在回滚安装...", "WARN")
             self._rollback(install_dir, journal)
             
-            self.root.after(0, lambda: self._install_failed(
+            self.root.after(0, lambda error=str(e): self._install_failed(
                 "安装失败",
-                f"安装过程发生错误:\n\n{str(e)}\n\n系统已自动回滚，请检查后重试。"
+                f"安装过程发生错误:\n\n{error}\n\n系统已尝试回滚，请检查安装日志后重试。"
             ))
     
     def _rollback(self, install_dir=None, journal=None):
@@ -1673,6 +1713,7 @@ class InstallerWizard:
             install_dir = getattr(self, 'install_dir', None)
             if not install_dir:
                 return
+        failed = False
         try:
             if not journal:
                 self._log("没有可用的安装记录，已跳过自动删除以保护已有文件。", "WARN")
@@ -1689,6 +1730,7 @@ class InstallerWizard:
                         os.remove(path)
                         self._log(f"已删除本次新建文件: {path}")
                 except Exception as e:
+                    failed = True
                     self._log(f"回滚文件失败 {path}: {e}", "ERROR")
 
             for path in reversed(journal.get("created_dirs", [])):
@@ -1699,12 +1741,17 @@ class InstallerWizard:
                 except Exception as e:
                     self._log(f"回滚目录失败 {path}: {e}", "WARN")
             
-            self._log("回滚完成", "SUCCESS")
+            if not failed:
+                self._log("回滚完成", "SUCCESS")
         except Exception as e:
+            failed = True
             self._log(f"回滚失败: {e}", "ERROR")
             self._log("请手动检查安装目录和桌面快捷方式", "WARN")
         finally:
-            self._cleanup_install_journal(journal)
+            if failed and journal:
+                self._log(f"保留回滚备份供恢复: {journal['backup_dir']}", "WARN")
+            else:
+                self._cleanup_install_journal(journal)
     
     def _install_failed(self, title, message):
         """安装失败弹窗"""

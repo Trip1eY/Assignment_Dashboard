@@ -30,6 +30,7 @@ BACKUP_DIR = backup_directory(BASE_DIR)
 LOG_DIR = BASE_DIR / "logs"
 
 REQUIRED_FILES = (
+    "py/github_updates.py",
     "py/launcher.py",
     "py/server.py",
     "html/dashboard.html",
@@ -47,6 +48,7 @@ REQUIRED_FILES = (
     "html/static/course_rules_editor.css",
 )
 COMMON_BACKUP_FILES = (
+    "py/github_updates.py",
     "py/launcher.py",
     "py/server.py",
     "py/ai_classifier.py",

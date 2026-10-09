@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_FILES = (
+    "py/github_updates.py",
     "py/launcher.py", "py/server.py", "html/dashboard.html", "html/dashboard_modern.html",
     "html/static/classic.css", "html/static/classic.js", "html/static/modern.css",
     "html/static/modern.js",

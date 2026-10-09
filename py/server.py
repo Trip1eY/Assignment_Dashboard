@@ -28,6 +28,9 @@ import ipaddress
 import hmac
 import stat
 from backup_paths import backup_directory
+import github_updates
+import zipfile
+from urllib.parse import urlencode
 from assignment_import import AssignmentImporter, MAX_REQUEST_BYTES, digest as import_content_digest, parse_upload_parts
 from http.cookies import SimpleCookie
 from datetime import datetime, date, timedelta
@@ -161,11 +164,12 @@ ORGANIZED_DIR = Path(_DEFAULT_CLASS_FOLDER) / "已收作业"
 CONVERT_TEMP_DIR = Path(tempfile.gettempdir()) / "wechat-tracker-convert"
 PREVIEW_CACHE_DIR = DATA_DIR / "preview_cache"  # Word→PDF 预览缓存，持久化到 data/
 _IS_PREVIEW_CONVERTER = "--preview-convert" in sys.argv
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.3"
 UPDATE_REPOSITORY = "Trip1eY/Assignment_Dashboard"
 VERSION_MANIFEST = BASE_DIR / "manifest.json"
 STATIC_FILE_SUFFIXES = {".css", ".js", ".png", ".svg", ".ico"}
 UPDATE_REQUIRED_FILES = (
+    "py/github_updates.py",
     "py/launcher.py",
     "py/server.py",
     "html/dashboard.html",
@@ -5314,6 +5318,8 @@ class APIHandler(SimpleHTTPRequestHandler):
 
         elif path == "/api/update/check":
             self._check_github_update()
+        elif path == "/api/update/download":
+            self._download_github_update(qs)
 
         # ---- 静态文件 ----
         elif path == "/":
@@ -6969,6 +6975,7 @@ class APIHandler(SimpleHTTPRequestHandler):
 
         safe_version = re.sub(r"[^0-9A-Za-z._-]+", "_", version).strip("._-") or "update"
         package_files = [
+            "py/github_updates.py",
             "py/launcher.py",
             "py/server.py",
             "py/ai_classifier.py",
@@ -7038,26 +7045,12 @@ class APIHandler(SimpleHTTPRequestHandler):
 
     def _check_github_update(self):
         """查询 GitHub Releases 中最新的公开更新包。"""
-        api_url = f"https://api.github.com/repos/{UPDATE_REPOSITORY}/releases/latest"
-        request = urllib.request.Request(
-            api_url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "Assignment_Dashboard-Updater",
-            },
-        )
         try:
-            with urllib.request.urlopen(request, timeout=8) as response:
-                release = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                self._json({"ok": False, "msg": "GitHub 仓库不存在，或尚未发布任何 Release"}, status=404)
-            else:
-                self._json({"ok": False, "msg": f"GitHub 暂时无法访问（HTTP {e.code}）"}, status=502)
+            release = github_updates.get_latest()
+        except (OSError, ValueError) as e:
+            self._json({"ok": False, "msg": f"检查更新失败：{str(e)[:160]}。可从发布页手动下载。"}, status=502)
             return
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
-            self._json({"ok": False, "msg": f"检查更新失败：{str(e)[:160]}"}, status=502)
-            return
+
 
         assets = release.get("assets") or []
         update_assets = [
@@ -7090,9 +7083,27 @@ class APIHandler(SimpleHTTPRequestHandler):
             "asset": {
                 "name": asset.get("name", ""),
                 "size": asset.get("size", 0),
-                "download_url": asset.get("browser_download_url", ""),
+                "download_url": "/api/update/download?" + urlencode(
+                    {"version": latest_version, "name": asset.get("name", "")}),
             },
         })
+
+    def _download_github_update(self, qs):
+        if not self._request_is_local() or not self._origin_is_allowed():
+            self._json({"ok": False, "msg": "请在运行服务的电脑上下载并加载更新包"}, status=403)
+            return
+        try:
+            version = qs.get("version", [""])[0]
+            name = qs.get("name", [""])[0]
+            data = github_updates.download_release(version, name)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
+            self._json({"ok": False, "msg": f"下载失败：{str(exc)[:160]}。可从发布页手动下载。"}, status=502)
 
     def _handle_update(self, parts):
         """处理系统更新：接收 ZIP 包 → 校验 → 备份 → 解压替换 → 重启"""
@@ -7186,7 +7197,7 @@ class APIHandler(SimpleHTTPRequestHandler):
             backup_path = backup_dir / backup_name
             # 备份当前关键文件
             backup_entries = []
-            for item in ["py/launcher.py", "py/server.py", "py/ai_classifier.py", "py/restart_helper.py",
+            for item in ["py/github_updates.py", "py/launcher.py", "py/server.py", "py/ai_classifier.py", "py/restart_helper.py",
                          "py/classifier_features.py", "py/classifier_trainer.py",
                          "html/dashboard.html", "html/dashboard_modern.html", "html/static/classic.css",
                          "html/static/classic.js", "html/static/modern.css", "html/static/modern.js",
