@@ -110,9 +110,9 @@ def get_version():
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
-        return config.get("version", "0.1.3")
+        return config.get("version", "0.1.2")
     except:
-        return "0.1.3"
+        return "0.1.2"
 
 
 def check_announcement():
