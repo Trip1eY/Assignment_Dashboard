@@ -5756,6 +5756,70 @@
     #page-manage .manage-server-card .file-actions { gap: 8px; }
     #page-manage .manage-server-card button { flex: 1; padding: 8px; }
   }
+/* Loaded after the original UI stylesheet. These overrides only affect the independent palette presets. */
+body[data-palette] {
+  color:var(--text);
+  background:radial-gradient(ellipse at 25% 0%,color-mix(in srgb,var(--inspiration-a) 18%,transparent),transparent 48%),radial-gradient(ellipse at 98% 42%,color-mix(in srgb,var(--inspiration-b) 12%,transparent),transparent 48%),var(--bg);
+}
+body[data-palette-scheme="light"] {color-scheme:light}
+body[data-palette-scheme="dark"] {color-scheme:dark}
+body[data-palette]::before {background-image:linear-gradient(color-mix(in srgb,var(--text) 3%,transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in srgb,var(--text) 3%,transparent) 1px,transparent 1px);background-size:48px 48px}
+body[data-palette] .motion-field {opacity:.2}
+body[data-palette] .motion-field::before,body[data-palette] .motion-field::after {background:linear-gradient(90deg,transparent,var(--inspiration-a),var(--inspiration-b),transparent);opacity:.3}
+body[data-palette] :is(.sidebar,.topbar,.card,.hero,.student-card,.assignment-node,.quick-card,.brain-network,.table-wrap,.help-panel,.help-step,.manage-section-nav,.manage-workspace,.workspace-fold,.theme-summary,.theme-card,.modal-content,dialog,.toast) {color:var(--text);border-color:var(--line);background:var(--panel);box-shadow:var(--shadow)}
+body[data-palette] .sidebar {background:color-mix(in srgb,var(--panel) 95%,var(--bg))}
+body[data-palette] :is(.hero,.brain-network) {background:linear-gradient(125deg,color-mix(in srgb,var(--inspiration-a) 8%,var(--panel)),var(--panel) 55%,color-mix(in srgb,var(--inspiration-b) 8%,var(--panel)))}
+body[data-palette] :is(.hero-side,.signal,.brain-node,.brain-network-stage,.brain-topology,.brain-topology-node,.empty,.stat,.source-card,.network-card,.theme-summary,.help-step,.assignment-detail-dropzone) {background:var(--panel-2);border-color:var(--line)}
+body[data-palette] :is(button,input,textarea,select,option) {color:var(--text);background-color:var(--panel-2);border-color:var(--line)}
+body[data-palette] :is(input,textarea) {background:var(--panel-2)}
+body[data-palette] select {background:var(--panel-2);appearance:auto;padding-right:12px;color-scheme:inherit}
+body[data-palette] option {background:var(--panel-2);color:var(--text)}
+body[data-palette] :is(input,textarea)::placeholder {color:var(--muted);opacity:1}
+body[data-palette] button {background:var(--panel-2);box-shadow:none}
+body[data-palette] button:hover {background:var(--panel-3);border-color:var(--primary)}
+body[data-palette] button.primary {background:var(--primary);color:var(--button-text);border-color:var(--primary);box-shadow:0 8px 24px color-mix(in srgb,var(--primary) 18%,transparent)}
+body[data-palette] button.danger {color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,var(--line));background:color-mix(in srgb,var(--red) 7%,var(--panel))}
+body[data-palette] :is(.nav button,.manage-section-nav button) {color:var(--muted);background:transparent}
+body[data-palette] :is(.nav button.active,.manage-section-nav button.active,.brain-tabs button.active,.help-filter.active) {color:var(--text);background:color-mix(in srgb,var(--primary) 12%,var(--panel));border-color:var(--primary);box-shadow:inset 3px 0 0 var(--primary)}
+body[data-palette] :is(.tag,.pill,.style-pill,.source-chip,.brain-node-chip) {color:var(--text);background:var(--panel-2);border-color:var(--line);box-shadow:none}
+body[data-palette] .tag {background:var(--primary);color:var(--button-text)}
+body[data-palette] .tag.green {background:var(--green);color:var(--bg)}
+body[data-palette] .tag.orange {background:var(--amber);color:var(--bg)}
+body[data-palette] .tag.red {background:var(--red);color:var(--bg)}
+body[data-palette] .tag.blue {background:var(--blue);color:var(--bg)}
+body[data-palette] :is(.row-sub,.muted,.empty,.help-step p) {color:var(--muted)}
+body[data-palette] .logo-mark {background:linear-gradient(135deg,var(--inspiration-b),var(--inspiration-a));border-color:var(--line);box-shadow:0 8px 28px color-mix(in srgb,var(--inspiration-b) 18%,transparent)}
+body[data-palette] .logo-glyph span {background:#fff}
+body[data-palette] .logo-glyph span:nth-child(4) {background:var(--inspiration-a)}
+body[data-palette] .logo-text strong {color:var(--text)}
+body[data-palette] :is(.node-title,.logo-note strong,.help-step strong,.faq-q,.faq-cat.active) {color:var(--text)}
+body[data-palette] .help-step::before,body[data-palette] .theme-card.active::after,body[data-palette] .ann-type-icon {color:var(--button-text);background:var(--primary)}
+body[data-palette] .avatar {color:var(--button-text);background:var(--primary);box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 15%,transparent)}
+body[data-palette] .progress {background:var(--panel-3)}
+body[data-palette] .progress>span {background:linear-gradient(90deg,var(--primary),var(--accent))}
+body[data-palette] :focus-visible {outline:2px solid var(--primary);outline-offset:3px}
+body[data-palette] .card::before {background:linear-gradient(90deg,var(--inspiration-a),var(--inspiration-b));opacity:.65}
+body[data-palette] .card::after {opacity:.08}
+
+  /* Native menus use a paired opaque background/ink, not theme text alone. */
+  :root { --select-popup-bg:#24221f; --select-popup-text:#ffffff; --select-control-bg:#24221f; --select-control-text:#ffffff; --select-color-scheme:dark; }
+  html body select, html body #page-manage .manage-card select {
+    color:var(--select-control-text) !important;
+    color-scheme:var(--select-color-scheme) !important;
+    background:
+      linear-gradient(45deg,transparent 50%,currentColor 50%) calc(100% - 18px) 50% / 7px 7px no-repeat,
+      linear-gradient(135deg,currentColor 50%,transparent 50%) calc(100% - 12px) 50% / 7px 7px no-repeat,
+      var(--select-control-bg) !important;
+    appearance:none;
+    padding-right:42px;
+  }
+  html body select :is(option,optgroup) {
+    color:var(--select-popup-text) !important;
+    background:var(--select-popup-bg) !important;
+  }
+  @media (forced-colors:active) {
+    html body select,html body #page-manage .manage-card select,html body select :is(option,optgroup) {color:CanvasText !important;background:Canvas !important;forced-color-adjust:auto;}
+  }
 </style>
 </head>
 <body>
@@ -7031,7 +7095,73 @@ function playBootIntro() {
   window.setTimeout(() => intro.classList.add('is-hidden'), 3150);
 }
 
+const paletteThemeOverrides = new Map();
+function themeColorChannels(value) {
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) return [36,34,31];
+  context.fillStyle = '#24221f';
+  context.fillStyle = String(value || '');
+  const resolved = context.fillStyle;
+  if (/^#[0-9a-f]{6}$/i.test(resolved)) return [1,3,5].map(i => parseInt(resolved.slice(i,i+2),16));
+  const match = resolved.match(/^rgba?\(([^)]+)\)$/);
+  if (match) {
+    const parts = match[1].split(',').map(Number);
+    if (parts.length === 3 || parts[3] === 1) return parts.slice(0,3);
+  }
+  return [36,34,31];
+}
+function themeLuminance(channels) {
+  return channels.map(c => c/255).map(c => c<=.04045 ? c/12.92 : ((c+.055)/1.055)**2.4)
+    .reduce((sum,c,i) => sum+c*[.2126,.7152,.0722][i],0);
+}
+function readableThemeInk(background, preferred) {
+  const bg=themeLuminance(themeColorChannels(background));
+  const fg=themeLuminance(themeColorChannels(preferred));
+  if ((Math.max(bg,fg)+.05)/(Math.min(bg,fg)+.05)>=4.5) return preferred;
+  return (bg+.05)/.05 >= 1.05/(bg+.05) ? '#000000' : '#ffffff';
+}
+function protectSelectContrast() {
+  const root=document.body;
+  const style=getComputedStyle(document.body);
+  const channels=themeColorChannels(style.getPropertyValue('--panel-2'));
+  const background='rgb('+channels.join(', ')+')';
+  const ink=readableThemeInk(background,style.getPropertyValue('--text').trim() || '#ffffff');
+  for(const [key,value] of Object.entries({
+    '--select-control-bg':background,'--select-popup-bg':background,
+    '--select-control-text':ink,'--select-popup-text':ink,
+    '--select-color-scheme':themeLuminance(channels)>.179 ? 'light':'dark'
+  })) root.style.setProperty(key,value);
+}
+function applyPalettePreset(palette) {
+  delete document.body.dataset.palette;
+  delete document.body.dataset.paletteScheme;
+  if (!palette?.inspiration) return;
+  document.body.dataset.palette=palette.id;
+  document.body.dataset.paletteScheme=palette.scheme;
+  const dark=palette.scheme==='dark';
+  const values={
+    bg:palette.colors.background,panel:palette.colors.surface,text:palette.colors.text,
+    line:palette.colors.border,'line-strong':palette.colors.border,...palette.tokens,
+    'inspiration-a':palette.inspiration[0],'inspiration-b':palette.inspiration[1],
+    green:dark?'#89DDB7':'#176648',amber:dark?'#F4CE85':'#805714',
+    red:dark?'#FFA5B5':'#A62F48',blue:dark?'#A9CCFF':'#315F9B',
+    'brain-cyan':palette.colors.accent,'brain-violet':palette.colors.primary,
+    'brain-amber':dark?'#F4CE85':'#805714',
+    shadow:dark?'0 18px 48px #0003':'0 16px 42px #34304c0c'
+  };
+  for (const [key,value] of Object.entries(values)) {
+    const property='--'+key;
+    paletteThemeOverrides.set(property,document.documentElement.style.getPropertyValue(property));
+    document.documentElement.style.setProperty(property,value);
+  }
+}
 function applyThemeValues(theme) {
+  for (const [key,value] of paletteThemeOverrides) {
+    if (value) document.documentElement.style.setProperty(key,value);
+    else document.documentElement.style.removeProperty(key);
+  }
+  paletteThemeOverrides.clear();
   const preset = (theme.presets || []).find(p => p.id === theme.active);
   const colors = theme.active === 'custom' ? theme.custom : (preset?.colors || theme.custom || {});
   const style = theme.active === 'custom' ? (theme.style || 'modern') : (preset?.style || theme.style || 'modern');
@@ -7053,6 +7183,8 @@ function applyThemeValues(theme) {
       document.documentElement.style.setProperty('--line-strong', colors.border);
     }
   }
+  applyPalettePreset(preset);
+  protectSelectContrast();
 }
 function applyTheme(theme, { animate = false } = {}) {
   const reduceMotion = state.lowPower || window.matchMedia('(prefers-reduced-motion: reduce)').matches;

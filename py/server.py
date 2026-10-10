@@ -470,6 +470,244 @@ THEME_PRESETS = [
     },
 ]
 
+# Independent palettes; existing presets and default selection are preserved.
+THEME_PRESETS += [
+    {
+        "id": "sky-vermilion",
+        "name": "晴空朱砂",
+        "description": "天青铺底，朱砂点睛；清爽、有辨识度的浅色工作台。",
+        "style": "modern",
+        "inspiration": [
+            "#BFDEFF",
+            "#D30121"
+        ],
+        "scheme": "light",
+        "colors": {
+            "primary": "#B80020",
+            "accent": "#245C91",
+            "background": "#EFF6FD",
+            "surface": "#FFFFFF",
+            "text": "#18334D",
+            "border": "#C4D8EA"
+        },
+        "tokens": {
+            "panel-2": "#E4EFF9",
+            "panel-3": "#D6E7F5",
+            "muted": "#49627B",
+            "faint": "#526D85",
+            "button-text": "#FFFFFF"
+        }
+    },
+    {
+        "id": "rose-carbon",
+        "name": "玫瑰碳黑",
+        "description": "碳黑与玫粉的甜酷组合，克制的光晕与利落层次。",
+        "style": "modern",
+        "inspiration": [
+            "#E6397C",
+            "#1A1A1D"
+        ],
+        "scheme": "dark",
+        "colors": {
+            "primary": "#F276A4",
+            "accent": "#FFB3CF",
+            "background": "#151518",
+            "surface": "#202024",
+            "text": "#FFF0F6",
+            "border": "#54414B"
+        },
+        "tokens": {
+            "panel-2": "#2B252C",
+            "panel-3": "#382D37",
+            "muted": "#C8B4C0",
+            "faint": "#B6A3AF",
+            "button-text": "#29131E"
+        }
+    },
+    {
+        "id": "golden-iris",
+        "name": "金色鸢尾",
+        "description": "木瓜黄与菖蒲紫；温暖、文艺，又带一点学院气。",
+        "style": "modern",
+        "inspiration": [
+            "#F9C116",
+            "#694D9F"
+        ],
+        "scheme": "light",
+        "colors": {
+            "primary": "#694D9F",
+            "accent": "#765B05",
+            "background": "#F8F4E9",
+            "surface": "#FFFCF5",
+            "text": "#34264E",
+            "border": "#DCCFBD"
+        },
+        "tokens": {
+            "panel-2": "#EEE7F4",
+            "panel-3": "#E5DCEE",
+            "muted": "#685B74",
+            "faint": "#716477",
+            "button-text": "#FFFFFF"
+        }
+    },
+    {
+        "id": "ocean-cyan",
+        "name": "深海青蓝",
+        "description": "幽兰夜色与青蓝信号；清晰、冷静的深海控制台。",
+        "style": "modern",
+        "inspiration": [
+            "#00B4D8",
+            "#03045E"
+        ],
+        "scheme": "dark",
+        "colors": {
+            "primary": "#00B4D8",
+            "accent": "#83E7F5",
+            "background": "#060B32",
+            "surface": "#101943",
+            "text": "#EFFAFF",
+            "border": "#344D79"
+        },
+        "tokens": {
+            "panel-2": "#16254E",
+            "panel-3": "#203258",
+            "muted": "#B1C9DF",
+            "faint": "#A0BBD4",
+            "button-text": "#032133"
+        }
+    },
+    {
+        "id": "lime-violet",
+        "name": "酸橙电紫",
+        "description": "蓝紫空间与酸橙亮点；轻快的数字感、鲜明的进度信号。",
+        "style": "modern",
+        "inspiration": [
+            "#D7FA32",
+            "#584DFF"
+        ],
+        "scheme": "dark",
+        "colors": {
+            "primary": "#D7FA32",
+            "accent": "#BCB5FF",
+            "background": "#161329",
+            "surface": "#242039",
+            "text": "#F5F4FF",
+            "border": "#524A73"
+        },
+        "tokens": {
+            "panel-2": "#302944",
+            "panel-3": "#3B3354",
+            "muted": "#C5C0DD",
+            "faint": "#B5AFD0",
+            "button-text": "#252D0B"
+        }
+    },
+    {
+        "id": "apricot-stars",
+        "name": "暮星杏金",
+        "description": "漫天星蓝托住蛋壳杏金；温柔的夜间阅读氛围。",
+        "style": "modern",
+        "inspiration": [
+            "#F8C387",
+            "#2E317C"
+        ],
+        "scheme": "dark",
+        "colors": {
+            "primary": "#F8C387",
+            "accent": "#D0CBFF",
+            "background": "#181A3B",
+            "surface": "#262849",
+            "text": "#FFF5E8",
+            "border": "#5E5674"
+        },
+        "tokens": {
+            "panel-2": "#323454",
+            "panel-3": "#41415F",
+            "muted": "#D0C5D7",
+            "faint": "#BFB5CC",
+            "button-text": "#382710"
+        }
+    },
+    {
+        "id": "mist-rose",
+        "name": "雾玫黛蓝",
+        "description": "藕粉雾面与黛蓝文字；安静、耐看的低饱和浅色。",
+        "style": "modern",
+        "inspiration": [
+            "#E4C6D0",
+            "#425066"
+        ],
+        "scheme": "light",
+        "colors": {
+            "primary": "#425066",
+            "accent": "#87465E",
+            "background": "#F4EFF1",
+            "surface": "#FFFAFC",
+            "text": "#344154",
+            "border": "#D9C8CF"
+        },
+        "tokens": {
+            "panel-2": "#EBE2E7",
+            "panel-3": "#E1D6DE",
+            "muted": "#665966",
+            "faint": "#6D5D6B",
+            "button-text": "#FFFFFF"
+        }
+    },
+    {
+        "id": "peach-milk",
+        "name": "桃奶柔光",
+        "description": "桃粉与奶白的轻盈组合；柔软不刺眼，适合日常使用。",
+        "style": "modern",
+        "inspiration": [
+            "#FFC2CB",
+            "#FFF5E8"
+        ],
+        "scheme": "light",
+        "colors": {
+            "primary": "#A83E5C",
+            "accent": "#80502F",
+            "background": "#FFF5E8",
+            "surface": "#FFFCF7",
+            "text": "#543D42",
+            "border": "#E8C6C8"
+        },
+        "tokens": {
+            "panel-2": "#FCE5E4",
+            "panel-3": "#F5D6D9",
+            "muted": "#795A60",
+            "faint": "#805E65",
+            "button-text": "#FFFFFF"
+        }
+    },
+    {
+        "id": "dopamine-pop",
+        "name": "多巴胺派对",
+        "description": "柠檬黄绿与热烈桃红；深色画布上的活力撞色。",
+        "style": "modern",
+        "inspiration": [
+            "#F0FF0A",
+            "#FF007D"
+        ],
+        "scheme": "dark",
+        "colors": {
+            "primary": "#F0FF0A",
+            "accent": "#FF80BC",
+            "background": "#20101F",
+            "surface": "#2D1C2B",
+            "text": "#FFF5FB",
+            "border": "#67475E"
+        },
+        "tokens": {
+            "panel-2": "#3A2536",
+            "panel-3": "#493144",
+            "muted": "#D4B9CB",
+            "faint": "#C6AEC1",
+            "button-text": "#292A06"
+        }
+    }
+]
+
 DEFAULT_UI_THEME = {
     "active": "clean-blue",
     "style": "modern",
