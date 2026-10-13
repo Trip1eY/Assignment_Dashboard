@@ -17,11 +17,12 @@ def contrast(a, b):
 class PaletteTests(unittest.TestCase):
     def test_presets_keep_originals_and_add_nine_readable_palettes(self):
         presets = server.THEME_PRESETS
-        self.assertEqual(len(presets), 20)
-        self.assertEqual(len({p['id'] for p in presets}), 20)
+        self.assertEqual(len(presets), 28)
+        self.assertEqual(len({p['id'] for p in presets}), 28)
+        self.assertEqual(len(server.THEME_FAMILIES), 19)
         self.assertEqual(presets[0]['id'], 'clean-blue')
         palettes = [p for p in presets if 'inspiration' in p]
-        self.assertEqual(len(palettes), 9)
+        self.assertEqual(len(palettes), 17)
         for p in palettes:
             with self.subTest(theme=p['id']):
                 c, t = p['colors'], p['tokens']

@@ -5820,6 +5820,124 @@ body[data-palette] .card::after {opacity:.08}
   @media (forced-colors:active) {
     html body select,html body #page-manage .manage-card select,html body select :is(option,optgroup) {color:CanvasText !important;background:Canvas !important;forced-color-adjust:auto;}
   }
+/* Background decoration: transform/opacity CSS only, no continuous JS frame loop. */
+body.background-motion {isolation:isolate}
+body.background-motion .motion-field,body.background-motion .hero-scanline {display:none}
+body.background-motion::before {animation:none;opacity:.25}
+#background-motion-layer {position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;opacity:var(--motion-strength,.65);contain:layout paint}
+#background-motion-layer > span {position:absolute;pointer-events:none;display:none}
+#background-motion-layer[data-mode="ocean"] .veil {display:block;width:135vmax;height:48vmax;left:-30vmax;border-radius:50%;background:radial-gradient(ellipse,transparent 24%,color-mix(in srgb,var(--inspiration-a,var(--primary)) 36%,transparent) 41%,color-mix(in srgb,var(--inspiration-b,var(--accent)) 20%,transparent) 50%,transparent 67%);animation:motion-tide calc(26s / var(--background-motion-speed,1)) ease-in-out infinite alternate}
+#background-motion-layer .veil-one {top:-25vmax;transform:rotate(-18deg)}
+#background-motion-layer .veil-two {top:20vh;left:-5vmax !important;animation-delay:-12s !important;animation-duration:calc(34s / var(--background-motion-speed,1)) !important;opacity:.55;transform:rotate(18deg)}
+#background-motion-layer .veil-three {bottom:-28vmax;animation-delay:-20s !important;animation-duration:calc(38s / var(--background-motion-speed,1)) !important;opacity:.38}
+#background-motion-layer[data-mode="stars"] .orbit {display:block;width:90vmax;height:90vmax;left:45%;top:42%;border-radius:50%;border:1px solid color-mix(in srgb,var(--inspiration-a,var(--primary)) 18%,transparent);transform:translate(-50%,-50%) rotate(-24deg) scaleY(.65);animation:motion-orbit calc(70s / var(--background-motion-speed,1)) linear infinite}
+#background-motion-layer .orbit::before {content:"";position:absolute;inset:10%;border-radius:50%;background:conic-gradient(from 80deg,transparent 0 50%,color-mix(in srgb,var(--inspiration-a,var(--primary)) 34%,transparent) 66%,transparent 87%);mask-image:radial-gradient(circle,transparent 0 65%,#000 66% 67%,transparent 68%)}
+#background-motion-layer .orbit::after {content:"";position:absolute;top:8%;left:22%;width:8px;height:8px;border-radius:50%;background:var(--inspiration-a,var(--primary));box-shadow:0 0 18px 3px color-mix(in srgb,var(--inspiration-a,var(--primary)) 35%,transparent)}
+#background-motion-layer .orbit-two {width:68vmax !important;height:68vmax !important;animation-duration:calc(95s / var(--background-motion-speed,1)) !important;animation-direction:reverse !important;opacity:.5}
+#background-motion-layer[data-mode="stars"] .star {display:block;width:3px;height:3px;border-radius:50%;background:var(--inspiration-a,var(--primary));box-shadow:0 0 12px color-mix(in srgb,var(--inspiration-a,var(--primary)) 60%,transparent);animation:motion-twinkle calc(6s / var(--background-motion-speed,1)) ease-in-out var(--star-delay) infinite}
+#background-motion-layer[data-mode="peach"] .orb {display:block;width:85vmax;height:85vmax;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--inspiration-a,var(--primary)) 55%,transparent),color-mix(in srgb,var(--inspiration-a,var(--primary)) 24%,transparent) 32%,transparent 65%);animation:motion-cloud calc(30s / var(--background-motion-speed,1)) ease-in-out infinite alternate}
+#background-motion-layer .orb-one {left:-45vmax;top:-42vmax}
+#background-motion-layer .orb-two {right:-42vmax;bottom:-40vmax;animation-delay:-15s !important;animation-duration:calc(40s / var(--background-motion-speed,1)) !important;background:radial-gradient(circle,color-mix(in srgb,var(--inspiration-a,var(--primary)) 38%,transparent),color-mix(in srgb,var(--inspiration-b,var(--accent)) 55%,transparent) 30%,transparent 64%) !important}
+#background-motion-layer .orb-three {right:-35vmax;top:-48vmax;animation-delay:-8s !important;opacity:.4}
+body.background-motion .hero {background:linear-gradient(125deg,color-mix(in srgb,var(--inspiration-a,var(--primary)) 8%,var(--panel)),color-mix(in srgb,var(--panel) 88%,transparent) 60%,color-mix(in srgb,var(--inspiration-b,var(--accent)) 8%,var(--panel)))}
+body.background-motion-paused #background-motion-layer > span {animation-play-state:paused !important}
+body.background-motion.low-power::before,body.background-motion.low-power::after {animation:none !important;transition:none !important}
+body.background-motion.low-power #background-motion-layer > span {animation:none !important}
+@keyframes motion-tide {from{transform:translate3d(-4vw,-2vh,0) rotate(-16deg) scale(.96)}to{transform:translate3d(7vw,7vh,0) rotate(2deg) scale(1.06)}}
+@keyframes motion-orbit {from{transform:translate(-50%,-50%) rotate(-24deg) scaleY(.65)}to{transform:translate(-50%,-50%) rotate(336deg) scaleY(.65)}}
+@keyframes motion-twinkle {0%,100%{opacity:.2;transform:scale(var(--star-scale))}50%{opacity:.85;transform:scale(calc(var(--star-scale)*1.3))}}
+@keyframes motion-cloud {from{transform:translate3d(-2vw,0,0) scale(.94);opacity:.6}to{transform:translate3d(8vw,5vh,0) scale(1.06);opacity:1}}
+
+body {--background-motion-speed:1;--motion-strength:.65}
+body .motion-field::before {animation-duration:calc(18s / var(--background-motion-speed))}
+body .motion-field::after {animation-duration:calc(24s / var(--background-motion-speed))}
+body.ui-mecha .motion-field::before {animation-duration:calc(8s / var(--background-motion-speed))}
+body.ui-mecha .motion-field::after {animation-duration:calc(11s / var(--background-motion-speed))}
+body.ui-shader::before {animation-duration:calc(22s / var(--background-motion-speed))}
+body.ui-shader:not(.background-motion)::before {opacity:calc(.86 * var(--motion-strength) / .65)}
+body.ui-shader .motion-field::before {animation-duration:calc(16s / var(--background-motion-speed))}
+body.ui-shader .motion-field::after {animation-duration:calc(21s / var(--background-motion-speed))}
+body.ui-shader .hero::after {animation-duration:calc(18s / var(--background-motion-speed))}
+#background-motion-layer[hidden] {display:none !important}
+body .motion-field {opacity:calc(var(--motion-strength,.65) / .65)}
+body.ui-paper .motion-field {opacity:calc(.42 * var(--motion-strength) / .65)}
+body.ui-paper::before {opacity:calc(.9 * var(--motion-strength) / .65)}
+body .hero-scanline::before {animation-duration:calc(9s / var(--background-motion-speed))}
+body .hero-scanline::after {animation-duration:calc(7.5s / var(--background-motion-speed))}
+body.ui-shader .hero-scanline::before {animation-duration:calc(7s / var(--background-motion-speed))}
+body.background-motion-paused .hero-scanline::before,body.background-motion-paused .hero-scanline::after {animation-play-state:paused !important}
+body.background-motion-off .motion-field {display:none !important}
+body.background-motion-off::before,body.background-motion-paused::before,
+body.background-motion-paused .motion-field::before,body.background-motion-paused .motion-field::after,
+body.background-motion-off .hero::after,body.background-motion-off .hero-scanline,body.background-motion-off .hero-glint,
+body.background-motion-paused .hero::after,body.background-motion-paused .hero-scanline,body.background-motion-paused .hero-glint {animation-play-state:paused !important}
+body.low-power::before,body.low-power::after {animation:none !important;transition:none !important}
+#page-manage .manage-theme-card,
+#page-manage .manage-motion-card {grid-column:auto;align-self:stretch;height:auto;display:flex;flex-direction:column}
+#page-manage .manage-theme-card .theme-select-panel {display:flex;flex-direction:column;flex:1;gap:12px}
+#page-manage .manage-theme-card .theme-summary {flex:1;margin-top:0;display:flex;flex-direction:column;justify-content:flex-start;gap:12px}
+#page-manage .manage-theme-card .theme-summary .swatches {margin-top:auto}
+#page-manage .manage-theme-card .card-foot,
+#page-manage .manage-motion-card .card-foot {margin-top:auto;padding-top:14px;min-height:76px}
+#page-manage .manage-motion-card .motion-settings-footer {margin-bottom:16px}
+#page-manage .manage-network-card {grid-column:1 / -1}
+#page-manage .manage-network-card .network-access-details {
+  grid-template-columns:minmax(0,1fr) auto;
+  grid-template-areas:"urls urls" "credentials actions" "note note";
+  grid-template-rows:auto auto auto;
+  column-gap:20px;align-items:start;
+}
+#page-manage .manage-network-card .network-access-details:not(.is-collapsed) {max-height:none}
+#page-manage .manage-network-card #lan-url-list {grid-area:urls;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));max-height:260px;overflow:auto;min-width:0}
+#page-manage .manage-network-card #lan-url-list .row-title {overflow-wrap:anywhere}
+#page-manage .manage-network-card .network-access-details > .toolbar {grid-area:credentials;margin:0}
+#page-manage .manage-network-card .network-access-details > .file-actions {grid-area:actions;margin:0}
+#page-manage .manage-network-card #network-mode-note {grid-area:note;margin-top:4px}
+.background-motion-settings {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.background-motion-settings label {display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0;font-size:13px}
+.background-motion-settings label:not(.motion-toggle) {align-content:start}
+.background-motion-settings select,.background-motion-settings input[type=range] {width:100%;min-width:0}
+.background-motion-settings input[type=checkbox] {width:18px;height:18px;accent-color:var(--primary)}
+.background-motion-settings input[type=range] {accent-color:var(--primary);padding:0;min-height:30px;background:transparent;border:0}
+.background-motion-settings output {margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted)}
+.motion-settings-footer {display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:20px}
+@media(max-width:720px) {
+ .background-motion-settings {grid-template-columns:minmax(0,1fr)}
+ #background-motion-layer .veil-three,#background-motion-layer .orbit-two,#background-motion-layer .orb-three,#background-motion-layer .star:nth-last-child(-n+6) {display:none !important}
+ #background-motion-layer {opacity:calc(var(--motion-strength)*.75)}
+}
+@media(max-width:900px) {
+ #page-manage .manage-theme-card .card-foot,#page-manage .manage-motion-card .card-foot {min-height:0}
+ #page-manage .manage-network-card .network-access-details {
+   grid-template-columns:minmax(0,1fr);grid-template-areas:"urls" "credentials" "actions" "note";grid-template-rows:auto;
+ }
+}
+@media(prefers-reduced-motion:reduce) {
+ #background-motion-layer > span,body::before,body::after {animation:none !important}
+}
+
+/* Theme families: palette variants share a selector, old preset IDs stay intact. */
+html body select,html body #page-manage .manage-card select {appearance:auto!important;-webkit-appearance:auto!important;background-image:none!important;padding-right:12px!important}
+.theme-family-label {font-size:13px;font-weight:700;margin-bottom:8px;display:block}
+ .manage-theme-card .theme-select-row {display:block}
+ .manage-theme-card #theme-style-pill {display:none}
+#theme-family {width:100%;min-height:44px}
+#theme-family-description {font-size:12px;line-height:1.7;color:var(--muted);margin:8px 0 14px}
+.theme-colorways {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.theme-colorway {display:flex;align-items:center;text-align:left;gap:10px;min-height:74px;padding:12px;min-width:0;border:1px solid var(--line)!important;border-radius:12px}
+.theme-colorway[aria-pressed=true] {border-color:var(--primary)!important;box-shadow:0 0 0 1px var(--primary);background:var(--panel-3)!important}
+.theme-color-chip {display:flex;width:36px;height:40px;flex-shrink:0;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.theme-color-chip span {flex:1}
+.theme-colorway strong {display:block;font-size:12px;overflow-wrap:anywhere}
+.theme-colorway small {font-size:11px;color:var(--muted)}
+.theme-color-check {visibility:hidden;margin-left:auto;font-weight:800}
+.theme-colorway[aria-pressed=true] .theme-color-check {visibility:visible}
+#theme-selection-status {font-size:12px;color:var(--muted);margin-top:10px}
+html body .progress {height:11px;background:var(--panel-3)!important;border:1px solid var(--muted);border-radius:999px;overflow:hidden}
+html body .progress>.bar,html body .progress>span {background:var(--progress-fill-ink,var(--primary))!important}
+html body .mini-row .progress {height:8px}
+.theme-colorway:focus-visible {outline:2px solid var(--primary);outline-offset:3px}
+@media(max-width:400px){.theme-colorways{gap:8px}.theme-colorway{padding:8px;gap:7px}.theme-color-chip{width:26px;height:34px}}
 </style>
 </head>
 <body>
@@ -6325,12 +6443,27 @@ body[data-palette] .card::after {opacity:.08}
             <div class="section-head"><h3>主题预设</h3><button class="primary" data-icon="setting" onclick="saveTheme()">保存主题</button></div>
             <div class="theme-select-panel">
               <div class="theme-select-row">
-                <select id="theme-select" onchange="selectTheme(this.value)"></select>
+                <label class="theme-family-label" for="theme-family">主题系列</label>
+                <select id="theme-family" onchange="selectThemeFamily(this.value)"></select>
                 <span class="pill" id="theme-style-pill">-</span>
               </div>
+              <div id="theme-family-description"></div>
+              <div class="theme-colorways" id="theme-colorways" role="group" aria-label="配色变体"></div>
               <div class="theme-summary" id="theme-summary"></div>
+              <div id="theme-selection-status" role="status"></div>
             </div>
-            <div class="card-foot">横向滑动查看更多主题；主题会切换整体风格、面板结构、线条语言和动效质感。</div>
+            <div class="card-foot">先选系列，再选配色；即时预览，点击“保存主题”后刷新仍保留。原主题风格与配色编号保持兼容。</div>
+          </div>
+          <div class="card manage-card manage-motion-card" data-manage-group="appearance" hidden>
+            <div class="section-head"><h3>背景动效</h3><button class="primary" data-icon="setting" id="motion-save" onclick="saveBackgroundMotion()">保存动效</button></div>
+            <div class="background-motion-settings">
+              <label class="motion-toggle"><input type="checkbox" id="motion-enabled" onchange="previewBackgroundMotion()">开启背景动效</label>
+              <label>动效样式<select id="motion-mode" onchange="previewBackgroundMotion()"><option value="auto">跟随主题</option><option value="ocean">青蓝潮汐</option><option value="stars">星轨呼吸</option><option value="peach">柔光云晕</option></select></label>
+              <label>动效强度 <output id="motion-intensity-value" for="motion-intensity">65%</output><input type="range" id="motion-intensity" min="0" max="100" step="1" value="65" oninput="previewBackgroundMotion()"></label>
+              <label>播放速度 <output id="motion-speed-value" for="motion-speed">1×</output><input type="range" id="motion-speed" min="0.25" max="2" step="0.05" value="1" oninput="previewBackgroundMotion()"></label>
+            </div>
+            <div class="motion-settings-footer"><span class="row-sub" role="status" id="background-motion-status"></span><button onclick="resetBackgroundMotion()">恢复默认</button></div>
+            <div class="card-foot">调节即时预览，保存后刷新仍保留。跟随主题时保留原主题效果；低功耗、减少动态效果和后台页面会自动暂停。仅影响背景，不影响分类与提交。</div>
           </div>
           <div class="card manage-card manage-keyword-card" data-manage-group="recognition" hidden>
             <div class="section-head"><h3>识别关键词</h3><button class="primary" data-icon="add" onclick="addKeyword()">添加关键词</button></div>
@@ -7185,6 +7318,8 @@ function applyThemeValues(theme) {
   }
   applyPalettePreset(preset);
   protectSelectContrast();
+  protectProgressContrast();
+  applyBackgroundMotion(theme);
 }
 function applyTheme(theme, { animate = false } = {}) {
   const reduceMotion = state.lowPower || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -7203,57 +7338,185 @@ function applyTheme(theme, { animate = false } = {}) {
   update();
   window.setTimeout(() => document.documentElement.classList.remove('theme-transitioning'), 460);
 }
+const backgroundMotionDefaults = { enabled: true, mode: 'auto', intensity: 65, speed: 1 };
+let themeSaveQueue = Promise.resolve();
+let lastSavedTheme = null;
+function persistThemeChange(changes) {
+  const task = themeSaveQueue.catch(() => {}).then(async () => {
+    const resp = await apiPost('/api/theme/save', {...(lastSavedTheme || state.theme), ...changes});
+    lastSavedTheme = resp.theme;
+    return resp;
+  });
+  themeSaveQueue = task;
+  return task;
+}
+let backgroundMotionDraft = null;
+let backgroundMotionTheme = null;
+let backgroundMotionLayer = null;
+const backgroundMotionMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
+function normalizeBackgroundMotion(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const finite = (key, fallback, low, high) => typeof source[key] === 'number' && Number.isFinite(source[key]) ? Math.min(high, Math.max(low, source[key])) : fallback;
+  return {
+    enabled: typeof source.enabled === 'boolean' ? source.enabled : true,
+    mode: ['auto', 'ocean', 'stars', 'peach'].includes(source.mode) ? source.mode : 'auto',
+    intensity: Math.round(finite('intensity', 65, 0, 100)),
+    speed: Math.round(finite('speed', 1, .25, 2) * 100) / 100
+  };
+}
+function mountBackgroundMotion() {
+  if (backgroundMotionLayer) return;
+  backgroundMotionLayer = document.createElement('div');
+  backgroundMotionLayer.id = 'background-motion-layer';
+  backgroundMotionLayer.setAttribute('aria-hidden', 'true');
+  backgroundMotionLayer.innerHTML = '<span class="veil veil-one"></span><span class="veil veil-two"></span><span class="veil veil-three"></span><span class="orbit orbit-one"></span><span class="orbit orbit-two"></span><span class="orb orb-one"></span><span class="orb orb-two"></span><span class="orb orb-three"></span>';
+  const positions = [[8,20],[18,65],[32,12],[48,78],[66,18],[83,63],[92,29],[42,42],[73,87],[25,88],[58,8],[96,81]];
+  positions.forEach(([x,y], i) => {
+    const star = document.createElement('span');
+    star.className = 'star';
+    star.style.left = x + '%'; star.style.top = y + '%';
+    star.style.setProperty('--star-delay', (-i * .7) + 's');
+    star.style.setProperty('--star-scale', i % 3 === 0 ? '1.5' : '1');
+    backgroundMotionLayer.appendChild(star);
+  });
+  document.body.prepend(backgroundMotionLayer);
+  document.addEventListener('visibilitychange', syncBackgroundMotion);
+  backgroundMotionMedia.addEventListener('change', syncBackgroundMotion);
+  new MutationObserver(syncBackgroundMotion).observe(document.body, {attributes: true, attributeFilter: ['class']});
+}
+function applyBackgroundMotion(theme) {
+  backgroundMotionTheme = theme;
+  mountBackgroundMotion();
+  syncBackgroundMotion();
+}
+function syncBackgroundMotion() {
+  if (!backgroundMotionLayer || !backgroundMotionTheme) return;
+  const settings = normalizeBackgroundMotion(backgroundMotionDraft || backgroundMotionTheme.motion);
+  const automatic = {'ocean-cyan': 'ocean', 'apricot-stars': 'stars', 'peach-milk': 'peach'};
+  const mode = settings.mode === 'auto' ? (automatic[backgroundMotionTheme.active] || backgroundMotionTheme.presets.find(p => p.id === backgroundMotionTheme.active)?.defaultMotion || '') : settings.mode;
+  const off = !settings.enabled || settings.intensity === 0;
+  const lowPower = document.body.classList.contains('low-power');
+  const reduced = backgroundMotionMedia.matches;
+  const paused = off || lowPower || reduced || document.hidden;
+  // Only mutate changed classes: the observer must not cause its own endless loop.
+  const toggle = (name, value) => {
+    if (document.body.classList.contains(name) !== value) document.body.classList.toggle(name, value);
+  };
+  toggle('background-motion', !!mode);
+  toggle('background-motion-off', off);
+  toggle('background-motion-paused', paused);
+  backgroundMotionLayer.hidden = !mode || off;
+  backgroundMotionLayer.dataset.mode = mode;
+  document.body.style.setProperty('--motion-strength', settings.intensity / 100);
+  document.body.style.setProperty('--background-motion-speed', settings.speed);
+  const status = document.getElementById('background-motion-status');
+  if (status) {
+    const reason = off ? '背景动效已关闭' : lowPower ? '低功耗模式：已暂停' : reduced ? '系统减少动态效果：已暂停' : document.hidden ? '后台页面：已暂停' : mode ? '正在播放 · ' + ({ocean:'青蓝潮汐',stars:'星轨呼吸',peach:'柔光云晕'}[mode]) : '跟随当前主题的原有动效';
+    status.textContent = reason + (backgroundMotionDraft ? ' · 未保存' : ' · 已保存');
+  }
+}
+function renderBackgroundMotionControls() {
+  const settings = normalizeBackgroundMotion(backgroundMotionDraft || state.theme?.motion);
+  const enabled = document.getElementById('motion-enabled');
+  if (!enabled) return;
+  enabled.checked = settings.enabled;
+  document.getElementById('motion-mode').value = settings.mode;
+  document.getElementById('motion-intensity').value = settings.intensity;
+  document.getElementById('motion-speed').value = settings.speed;
+  document.getElementById('motion-intensity-value').textContent = settings.intensity + '%';
+  document.getElementById('motion-speed-value').textContent = settings.speed + '×';
+  syncBackgroundMotion();
+}
+function previewBackgroundMotion() {
+  backgroundMotionDraft = normalizeBackgroundMotion({
+    enabled: document.getElementById('motion-enabled').checked,
+    mode: document.getElementById('motion-mode').value,
+    intensity: Number(document.getElementById('motion-intensity').value),
+    speed: Number(document.getElementById('motion-speed').value)
+  });
+  renderBackgroundMotionControls();
+}
+function resetBackgroundMotion() {
+  backgroundMotionDraft = {...backgroundMotionDefaults};
+  renderBackgroundMotionControls();
+}
+async function saveBackgroundMotion() {
+  const button = document.getElementById('motion-save');
+  button.disabled = true;
+  const submitted = normalizeBackgroundMotion(backgroundMotionDraft || state.theme?.motion);
+  const serial = ++themeSaveSerial;
+  try {
+    const resp = await persistThemeChange({active: state.selectedTheme, motion: submitted});
+    if (JSON.stringify(backgroundMotionDraft || submitted) === JSON.stringify(submitted)) backgroundMotionDraft = null;
+    if (serial !== themeSaveSerial) { renderBackgroundMotionControls(); return; }
+    state.theme = resp.theme;
+    applyTheme(resp.theme);
+    renderThemes();
+    toast('背景动效已保存');
+  } catch (e) {
+    toast('动效保存失败：' + e.message);
+  } finally { button.disabled = false; }
+}
 async function loadTheme() {
   const theme = await apiGet('/api/theme');
   state.theme = theme;
+  lastSavedTheme = theme;
   state.selectedTheme = theme.active || 'clean-blue';
   applyTheme(theme);
   renderThemes();
 }
+const themeFamilyLastChoice = new Map();
+function themeFamilies() {
+  if (state.theme?.families?.length) return state.theme.families;
+  return (state.theme?.presets || []).map(p => ({id:p.id,name:p.name,description:p.description || ''}));
+}
+function previewThemePalette(id) {
+  const preset = (state.theme?.presets || []).find(p => p.id === id);
+  if (!preset) return;
+  state.selectedTheme = id;
+  themeFamilyLastChoice.set(preset.family || preset.id, id);
+  applyTheme({...state.theme, active:id}, {animate:true});
+  renderThemes();
+}
+function selectThemeFamily(id) {
+  const options = (state.theme?.presets || []).filter(p => (p.family || p.id) === id);
+  const remembered = themeFamilyLastChoice.get(id);
+  previewThemePalette(options.find(p => p.id === remembered)?.id || options[0]?.id);
+}
 function renderThemes() {
-  const grid = document.getElementById('theme-grid');
-  const select = document.getElementById('theme-select');
-  const summary = document.getElementById('theme-summary');
-  const stylePill = document.getElementById('theme-style-pill');
+  renderBackgroundMotionControls();
   const presets = state.theme?.presets || [];
+  const active = presets.find(p => p.id === state.selectedTheme);
+  const families = themeFamilies();
+  const familyId = active?.family || active?.id;
+  const select = document.getElementById('theme-family');
   if (select) {
-    select.innerHTML = presets.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
-    select.value = state.selectedTheme;
+    select.innerHTML = families.map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)}</option>`).join('');
+    select.value = familyId || '';
   }
-  const active = presets.find(p => p.id === state.selectedTheme) || presets[0];
-  if (active && summary) {
-    const c = active.colors || {};
-    const styleName = themeStyleNames[active.style || 'modern'] || '现代风';
-    summary.innerHTML = `<div class="theme-summary-top">
-      <div class="theme-summary-title">${escapeHtml(active.name)}</div>
-      <span class="style-pill">${escapeHtml(styleName)}</span>
-    </div>
-    <div class="row-sub">${escapeHtml(active.description || '')}</div>
-    <div class="swatches">
-      <span class="swatch" style="background:${c.primary || '#8b5cf6'}"></span>
-      <span class="swatch" style="background:${c.accent || '#22d3a6'}"></span>
-      <span class="swatch" style="background:${c.background || '#11110f'}"></span>
-      <span class="swatch" style="background:${c.surface || '#1b1a18'}"></span>
-    </div>`;
-    if (stylePill) stylePill.textContent = styleName;
-  } else if (summary) {
-    summary.innerHTML = '<div class="empty">暂无主题预设</div>';
-    if (stylePill) stylePill.textContent = '-';
+  const family = families.find(f => f.id === familyId);
+  const description = document.getElementById('theme-family-description');
+  if (description) description.textContent = family?.description || '当前使用自定义主题';
+  const variants = presets.filter(p => (p.family || p.id) === familyId);
+  const grid = document.getElementById('theme-colorways');
+  if (grid) grid.innerHTML = variants.map(p => `<button type="button" class="theme-colorway" onclick="previewThemePalette('${escapeHtml(p.id)}')" aria-pressed="${p.id === state.selectedTheme}">
+    <span class="theme-color-chip" aria-hidden="true"><span style="background:${p.inspiration?.[0] || p.colors.primary}"></span><span style="background:${p.inspiration?.[1] || p.colors.background}"></span></span>
+    <span><strong>${escapeHtml(p.name)}</strong><small>${p.isNew ? '新增配色' : '原有配色'} · ${p.scheme === 'dark' ? '深色' : p.scheme === 'light' ? '浅色' : (themeStyleNames[p.style] || '现代风')}</small></span><span class="theme-color-check" aria-hidden="true">✓</span></button>`).join('');
+  const summary = document.getElementById('theme-summary');
+  if (summary) {
+    const colors = active?.colors || state.theme?.custom || {};
+    summary.innerHTML = `<div class="theme-summary-top"><div class="theme-summary-title">${escapeHtml(active?.name || '自定义主题')}</div><span class="style-pill">${escapeHtml(themeStyleNames[active?.style || state.theme?.style] || '现代风')}</span></div><div class="row-sub">${escapeHtml(active?.description || '')}</div><div class="swatches">${[colors.primary,colors.accent,colors.background,colors.surface].filter(Boolean).map(c=>`<span class="swatch" style="background:${c}" aria-hidden="true"></span>`).join('')}</div>`;
   }
-  if (!grid) return;
-  grid.innerHTML = presets.map(p => {
-    const c = p.colors || {};
-    const styleName = themeStyleNames[p.style || 'modern'] || '现代风';
-    return `<button class="theme-card ${state.selectedTheme === p.id ? 'active' : ''}" onclick="selectTheme('${p.id}')">
-      <div class="theme-topline"><strong>${escapeHtml(p.name)}</strong><span class="style-pill">${styleName}</span></div>
-      <div class="row-sub">${escapeHtml(p.description || '')}</div>
-      <div class="swatches">
-        <span class="swatch" style="background:${c.primary || '#8b5cf6'}"></span>
-        <span class="swatch" style="background:${c.accent || '#22d3a6'}"></span>
-        <span class="swatch" style="background:${c.background || '#11110f'}"></span>
-      </div>
-    </button>`;
-  }).join('');
+  const status = document.getElementById('theme-selection-status');
+  if (status) status.textContent = state.selectedTheme !== state.theme?.active || backgroundMotionDraft ? '外观有未保存的改动' : '当前外观已保存';
+}
+function protectProgressContrast() {
+  const css = getComputedStyle(document.body);
+  const track = css.getPropertyValue('--panel-3').trim();
+  const preferred = css.getPropertyValue('--primary').trim();
+  const a = themeLuminance(themeColorChannels(track)), b = themeLuminance(themeColorChannels(preferred));
+  document.documentElement.style.setProperty('--progress-fill-ink',
+    (Math.max(a,b)+.05)/(Math.min(a,b)+.05) >= 3 ? preferred : readableThemeInk(track,preferred));
 }
 async function selectTheme(id) {
   state.selectedTheme = id;
@@ -7261,7 +7524,7 @@ async function selectTheme(id) {
   renderThemes();
   const serial = ++themeSaveSerial;
   try {
-    const resp = await apiPost('/api/theme/save', { ...state.theme, active: id });
+    const resp = await persistThemeChange({active: id});
     if (serial !== themeSaveSerial) return;
     state.theme = resp.theme;
     state.selectedTheme = resp.theme.active;
@@ -7273,7 +7536,9 @@ async function selectTheme(id) {
   }
 }
 async function saveTheme() {
-  const resp = await apiPost('/api/theme/save', { ...state.theme, active: state.selectedTheme });
+  const motion = normalizeBackgroundMotion(backgroundMotionDraft || state.theme?.motion);
+  const resp = await persistThemeChange({active: state.selectedTheme, motion});
+  backgroundMotionDraft = null;
   state.theme = resp.theme;
   state.selectedTheme = resp.theme.active;
   applyTheme(resp.theme);

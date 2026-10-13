@@ -7,6 +7,7 @@
 import os
 import sys
 import json
+import math
 import io
 import time
 import shutil
@@ -708,6 +709,349 @@ THEME_PRESETS += [
     }
 ]
 
+# Theme families keep every existing preset id; only the selection UI is grouped.
+THEME_FAMILIES = [
+    {
+        "id": "blue-white",
+        "name": "蓝白晴川",
+        "description": "明亮蓝白，清爽的日常工作台"
+    },
+    {
+        "id": "jade",
+        "name": "青玉微光",
+        "description": "青蓝与暖白，温和而有层次"
+    },
+    {
+        "id": "crimson",
+        "name": "绯红夜幕",
+        "description": "红与深色，克制的明亮信号"
+    },
+    {
+        "id": "ember",
+        "name": "熔橙墨影",
+        "description": "暖橙与墨色，清晰的行动感"
+    },
+    {
+        "id": "cream",
+        "name": "暖杏柔光",
+        "description": "温暖柔和的浅色配色"
+    },
+    {
+        "id": "graphite",
+        "name": "石墨灰",
+        "description": "克制的工作台感"
+    },
+    {
+        "id": "high-contrast",
+        "name": "高对比",
+        "description": "可读性优先，独立保留"
+    },
+    {
+        "id": "sky-vermilion",
+        "name": "晴空朱砂",
+        "description": "天青与朱砂的撞色"
+    },
+    {
+        "id": "golden-iris",
+        "name": "金色鸢尾",
+        "description": "木瓜黄与菖蒲紫"
+    },
+    {
+        "id": "ocean-cyan",
+        "name": "深海青蓝",
+        "description": "冷静的深海控制台"
+    },
+    {
+        "id": "lime-violet",
+        "name": "酸橙电紫",
+        "description": "数字空间中的明亮酸橙"
+    },
+    {
+        "id": "apricot-stars",
+        "name": "暮星杏金",
+        "description": "杏金与星夜"
+    },
+    {
+        "id": "mist-rose",
+        "name": "雾玫黛蓝",
+        "description": "灰蓝与雾粉"
+    },
+    {
+        "id": "dopamine-pop",
+        "name": "多巴胺派对",
+        "description": "活力撞色"
+    },
+    {
+        "id": "mecha-core",
+        "name": "机甲核心",
+        "description": "保留原界面结构与质感"
+    },
+    {
+        "id": "mecha-heart-awakened",
+        "name": "机甲之心·觉醒",
+        "description": "保留独立机甲交互风格"
+    },
+    {
+        "id": "minimal-line",
+        "name": "极简线框",
+        "description": "轻量线条与秩序"
+    },
+    {
+        "id": "spiral-nebula",
+        "name": "螺旋星云",
+        "description": "保留原星云结构与动效"
+    },
+    {
+        "id": "paper-shader",
+        "name": "纸感流光",
+        "description": "保留纸感材质与流光"
+    }
+]
+THEME_PRESETS += [
+    {
+        "id": "hollyhock-night",
+        "name": "锦葵墨夜",
+        "family": "crimson",
+        "isNew": True,
+        "style": "modern",
+        "description": "锦葵墨夜 · 灵感双色，正文与状态色独立适配",
+        "inspiration": [
+            "#BF3553",
+            "#1A1A1A"
+        ],
+        "scheme": "dark",
+        "colors": {
+            "primary": "#ED8CA0",
+            "accent": "#FFBAC8",
+            "background": "#181417",
+            "surface": "#231B20",
+            "text": "#FFF0F3",
+            "border": "#64464F"
+        },
+        "tokens": {
+            "panel-2": "#30232B",
+            "panel-3": "#3B2A34",
+            "muted": "#D0B7C0",
+            "faint": "#C3A6B1",
+            "button-text": "#31151E"
+        },
+        "defaultMotion": ""
+    },
+    {
+        "id": "camellia-night",
+        "name": "茶花极夜",
+        "family": "crimson",
+        "isNew": True,
+        "style": "modern",
+        "description": "茶花极夜 · 灵感双色，正文与状态色独立适配",
+        "inspiration": [
+            "#EE3F4D",
+            "#000000"
+        ],
+        "scheme": "dark",
+        "colors": {
+            "primary": "#FF7C87",
+            "accent": "#FFB9B9",
+            "background": "#0C0C10",
+            "surface": "#19171D",
+            "text": "#FFF4F4",
+            "border": "#614149"
+        },
+        "tokens": {
+            "panel-2": "#281F26",
+            "panel-3": "#36262E",
+            "muted": "#CEB9BF",
+            "faint": "#C1A8B0",
+            "button-text": "#32131C"
+        },
+        "defaultMotion": ""
+    },
+    {
+        "id": "swallow-ember",
+        "name": "燕翎玄青",
+        "family": "ember",
+        "isNew": True,
+        "style": "modern",
+        "description": "燕翎玄青 · 灵感双色，正文与状态色独立适配",
+        "inspiration": [
+            "#FC6315",
+            "#1E1E1E"
+        ],
+        "scheme": "dark",
+        "colors": {
+            "primary": "#FFAE75",
+            "accent": "#FFD2A6",
+            "background": "#191614",
+            "surface": "#241D19",
+            "text": "#FFF5E9",
+            "border": "#6A4C39"
+        },
+        "tokens": {
+            "panel-2": "#33261E",
+            "panel-3": "#423023",
+            "muted": "#D5BDAA",
+            "faint": "#C9AE98",
+            "button-text": "#382012"
+        },
+        "defaultMotion": ""
+    },
+    {
+        "id": "jingtai-ivory",
+        "name": "景泰象牙",
+        "family": "blue-white",
+        "isNew": True,
+        "style": "modern",
+        "description": "景泰象牙 · 灵感双色，正文与状态色独立适配",
+        "inspiration": [
+            "#2775B6",
+            "#FFFEF8"
+        ],
+        "scheme": "light",
+        "colors": {
+            "primary": "#23659B",
+            "accent": "#185675",
+            "background": "#F5F7F4",
+            "surface": "#FFFEF8",
+            "text": "#18354D",
+            "border": "#C4D5E1"
+        },
+        "tokens": {
+            "panel-2": "#E9F0F5",
+            "panel-3": "#DDE8F0",
+            "muted": "#48647B",
+            "faint": "#536D81",
+            "button-text": "#FFFFFF"
+        },
+        "defaultMotion": "ocean"
+    },
+    {
+        "id": "butterfly-moon",
+        "name": "蝶翅月白",
+        "family": "blue-white",
+        "isNew": True,
+        "style": "modern",
+        "description": "蝶翅月白 · 灵感双色，正文与状态色独立适配",
+        "inspiration": [
+            "#4E7CA1",
+            "#EEF7F2"
+        ],
+        "scheme": "light",
+        "colors": {
+            "primary": "#3D6488",
+            "accent": "#286E69",
+            "background": "#EEF7F2",
+            "surface": "#F9FCFA",
+            "text": "#213D4B",
+            "border": "#C3D9D5"
+        },
+        "tokens": {
+            "panel-2": "#E3EEEA",
+            "panel-3": "#D6E5E2",
+            "muted": "#496A72",
+            "faint": "#536F76",
+            "button-text": "#FFFFFF"
+        },
+        "defaultMotion": ""
+    },
+    {
+        "id": "sea-salt-white",
+        "name": "海盐鱼白",
+        "family": "blue-white",
+        "isNew": True,
+        "style": "modern",
+        "description": "海盐鱼白 · 灵感双色，正文与状态色独立适配",
+        "inspiration": [
+            "#B6D4E9",
+            "#F7F4ED"
+        ],
+        "scheme": "light",
+        "colors": {
+            "primary": "#315F85",
+            "accent": "#39717B",
+            "background": "#F7F4ED",
+            "surface": "#FFFEFA",
+            "text": "#284353",
+            "border": "#CFDCDf"
+        },
+        "tokens": {
+            "panel-2": "#EAF1F5",
+            "panel-3": "#DDE9F0",
+            "muted": "#516B7A",
+            "faint": "#5A7380",
+            "button-text": "#FFFFFF"
+        },
+        "defaultMotion": ""
+    },
+    {
+        "id": "jade-lotus",
+        "name": "玉叙荷白",
+        "family": "jade",
+        "isNew": True,
+        "style": "modern",
+        "description": "玉叙荷白 · 灵感双色，正文与状态色独立适配",
+        "inspiration": [
+            "#126E82",
+            "#FBECDE"
+        ],
+        "scheme": "light",
+        "colors": {
+            "primary": "#126E82",
+            "accent": "#8B543D",
+            "background": "#FBF1E7",
+            "surface": "#FFFBF5",
+            "text": "#254049",
+            "border": "#D7D6C8"
+        },
+        "tokens": {
+            "panel-2": "#E8EFEC",
+            "panel-3": "#DBE7E3",
+            "muted": "#536A69",
+            "faint": "#5F7370",
+            "button-text": "#FFFFFF"
+        },
+        "defaultMotion": "peach"
+    },
+    {
+        "id": "waterfall-cream",
+        "name": "瀑布暖白",
+        "family": "jade",
+        "isNew": True,
+        "style": "modern",
+        "description": "瀑布暖白 · 灵感双色，正文与状态色独立适配",
+        "inspiration": [
+            "#51C4D3",
+            "#F9F1DB"
+        ],
+        "scheme": "light",
+        "colors": {
+            "primary": "#177484",
+            "accent": "#806025",
+            "background": "#F9F4E7",
+            "surface": "#FFFDF6",
+            "text": "#244650",
+            "border": "#C4DBD8"
+        },
+        "tokens": {
+            "panel-2": "#E1F1EF",
+            "panel-3": "#D2E7E5",
+            "muted": "#4D6D71",
+            "faint": "#567277",
+            "button-text": "#FFFFFF"
+        },
+        "defaultMotion": "ocean"
+    }
+]
+_THEME_FAMILY_BY_ID = {
+    "clean-blue": "blue-white",
+    "teal": "jade",
+    "apricot": "cream",
+    "berry": "crimson",
+    "rose-carbon": "crimson",
+    "peach-milk": "cream"
+}
+for _theme_preset in THEME_PRESETS:
+    _theme_preset.setdefault("family", _THEME_FAMILY_BY_ID.get(_theme_preset["id"], _theme_preset["id"]))
+
 DEFAULT_UI_THEME = {
     "active": "clean-blue",
     "style": "modern",
@@ -715,6 +1059,7 @@ DEFAULT_UI_THEME = {
     "publish_with_update": True,
     "force_publish_theme": False,
     "custom": THEME_PRESETS[0]["colors"].copy(),
+    "motion": {"enabled": True, "mode": "auto", "intensity": 65, "speed": 1.0},
 }
 
 # 模块级全局（供重启/关闭 API 和 main() 共享）
@@ -2340,7 +2685,7 @@ def default_config():
         "ignored_files": [],  # 用户明确忽略的文件路径
         "ignored_subjects": [],  # 用户已删除的科目，防止 load_config 从目录重建时复活
         "ignored_assignments": [],  # 用户已删除的作业，防止目录自动扫描重建时复活
-        "ui_theme": DEFAULT_UI_THEME.copy(),
+        "ui_theme": {**DEFAULT_UI_THEME, "custom": DEFAULT_UI_THEME["custom"].copy(), "motion": DEFAULT_UI_THEME["motion"].copy()},
         "default_frontend": "classic",
         "lan_access_enabled": False,
         "lan_access_token": "",
@@ -2357,6 +2702,25 @@ def default_config():
             "class_aliases": [],
         },
     }
+
+DEFAULT_BACKGROUND_MOTION = {"enabled": True, "mode": "auto", "intensity": 65, "speed": 1.0}
+
+def normalize_background_motion(value=None):
+    """Bound visual-only options; never trust arbitrary CSS values from config."""
+    result = DEFAULT_BACKGROUND_MOTION.copy()
+    if not isinstance(value, dict):
+        return result
+    if isinstance(value.get("enabled"), bool):
+        result["enabled"] = value["enabled"]
+    if value.get("mode") in ("auto", "ocean", "stars", "peach"):
+        result["mode"] = value["mode"]
+    for key, low, high in (("intensity", 0, 100), ("speed", .25, 2)):
+        number = value.get(key)
+        if isinstance(number, (int, float)) and not isinstance(number, bool) and math.isfinite(number):
+            result[key] = min(high, max(low, number))
+    result["intensity"] = round(result["intensity"])
+    result["speed"] = round(result["speed"], 2)
+    return result
 
 def normalize_ui_theme(value=None):
     """Return a safe ui_theme object with known preset ids and color keys."""
@@ -2384,6 +2748,7 @@ def normalize_ui_theme(value=None):
         theme["style"] = preset_map.get(theme["active"], {}).get("style", DEFAULT_UI_THEME["style"])
     for key in ("apply_to_classic", "publish_with_update", "force_publish_theme"):
         theme[key] = bool(theme.get(key))
+    theme["motion"] = normalize_background_motion(theme.get("motion"))
     return theme
 
 def theme_payload(cfg=None):
@@ -2393,10 +2758,12 @@ def theme_payload(cfg=None):
         "active": theme["active"],
         "style": theme["style"],
         "presets": THEME_PRESETS,
+        "families": THEME_FAMILIES,
         "custom": theme["custom"],
         "apply_to_classic": theme["apply_to_classic"],
         "publish_with_update": theme["publish_with_update"],
         "force_publish_theme": theme["force_publish_theme"],
+        "motion": theme["motion"],
     }
 
 def configured_file_types(cfg=None):
@@ -5712,6 +6079,8 @@ class APIHandler(SimpleHTTPRequestHandler):
 
         elif path == "/api/theme/save":
             cfg = load_config_raw()
+            if isinstance(data, dict) and "motion" not in data:
+                data = {**data, "motion": normalize_ui_theme(cfg.get("ui_theme"))["motion"]}
             cfg["ui_theme"] = normalize_ui_theme(data)
             save_config(cfg)
             self._json({"ok": True, "theme": theme_payload(cfg)})
